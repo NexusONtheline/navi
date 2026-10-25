@@ -3,9 +3,9 @@
 > *En la actualidad. En este momento.*
 
 Asistente personal para Linux inspirado en NAVI de **Serial Experiments Lain**.
-Vive en tu terminal, te habla, te escucha y controla tu PC.
+Vive en tu terminal, te habla, te escucha y controla tu PC/Laptop. *uso vibecoding con claude*
 
-**100% gratis**: usa la capa gratuita de la API de Gemini (cada persona pone su propia key)
+**100% gratis**: usa la capa gratuita de la API de Gemini (cada persona pone su propia key, por ahora solo esta para key de gemini)
 y todo lo de voz funciona en tu PC, sin internet.
 
 ```
@@ -133,3 +133,4 @@ navi --no-privado  vuelve a escuchar «NAVI, actívate»
 Cada habilidad es una función de Python en `navi/herramientas/`. Gemini lee el
 docstring para saber cuándo usarla. Crea tu módulo y regístralo en
 `navi/herramientas/__init__.py`.
+
