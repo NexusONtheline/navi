@@ -1,6 +1,7 @@
 # NAVI
 
 > *En la actualidad. En este momento.*
+AVISO> NAVI esta en beta y se puede actualizar constantemente recuerda actualiar tu navi con git pull
 
 Asistente personal para Linux inspirado en NAVI de **Serial Experiments Lain**.
 Vive en tu terminal, te habla, te escucha y controla tu PC/Laptop. *uso vibecoding con claude*
@@ -132,5 +133,5 @@ navi --no-privado  vuelve a escuchar «NAVI, actívate»
 
 Cada habilidad es una función de Python en `navi/herramientas/`. Gemini lee el
 docstring para saber cuándo usarla. Crea tu módulo y regístralo en
-`navi/herramientas/__init__.py`.
+`navi/herramientas/__init__.py`. (o puedes dejar un comentario dando ideas de que habilidades le podemos meter!)
 
