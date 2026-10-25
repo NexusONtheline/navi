@@ -1,5 +1,11 @@
 # NAVI
 
+<img width="692" height="388" alt="2026-10-2517-56-48-ezgif com-cut" src="https://github.com/user-attachments/assets/92104d34-36ea-4bf7-9910-d3a65d2df2b8" />
+
+
+
+
+
 > *En la actualidad. En este momento.*
 AVISO> NAVI esta en beta y se puede actualizar constantemente recuerda actualiar tu navi con git pull
 
