@@ -6,7 +6,7 @@ import sys
 from google.genai import errors
 
 from . import config, confirmaciones, interfaz, senales
-from .cerebro import Cerebro
+from .cerebro import ERRORES_DE_RED, Cerebro
 from .oido import Oido
 from .voz import Voz
 
@@ -58,6 +58,9 @@ def responder(cerebro: Cerebro, voz: Voz, mensaje: str) -> None:
             interfaz.error(f"Gemini respondió con un error: {e}")
     except errors.ServerError:
         interfaz.error("Los servidores de Gemini están saturados. Intenta en un momento.")
+    except ERRORES_DE_RED:  # sin internet o Gemini no contesta
+        interfaz.error("No pude conectarme al Nexo: Gemini no respondió. Intenta de nuevo.")
+        cerebro.reconectar()
     except KeyboardInterrupt:
         interfaz.error("Interrumpido.")
 

@@ -7,11 +7,19 @@ librería google-genai llama a nuestra función de Python automáticamente.
 import re
 import time
 
+import httpx
 from google import genai
 from google.genai import types
 
 from . import config, memoria, senales
 from .herramientas import TODAS
+
+# google-genai usa httpx2 si está instalado (viene con faster-whisper) y si no httpx
+try:
+    import httpx2
+    ERRORES_DE_RED = (httpx.TransportError, httpx2.TransportError)
+except ImportError:
+    ERRORES_DE_RED = (httpx.TransportError,)
 
 _NOMBRES_HERRAMIENTAS = {f.__name__ for f in TODAS}
 _LLAMADA_ESCRITA = re.compile(r"^`*\w+\(.*\)`*$", re.DOTALL)
@@ -46,12 +54,16 @@ brevemente o pregunta si te hablaban a ti.
 
 class Cerebro:
     def __init__(self) -> None:
-        # Tiempo límite y pocos reintentos: si Google está saturado, mejor avisar que colgarse
+        self._conectar()
+
+    def _conectar(self, historial=None) -> None:
+        # Tiempo límite corto: a veces Gemini se queda callado sin responder nunca,
+        # y un segundo intento suele contestar al momento. Mejor avisar que colgarse.
         self._cliente = genai.Client(
             api_key=config.GEMINI_API_KEY,
             http_options=types.HttpOptions(
-                timeout=60_000,  # milisegundos
-                retry_options=types.HttpRetryOptions(attempts=2, max_delay=5),
+                timeout=20_000,  # milisegundos, por cada petición
+                retry_options=types.HttpRetryOptions(attempts=3, max_delay=3),
             ),
         )
         instruccion = PERSONALIDAD
@@ -67,7 +79,12 @@ class Cerebro:
                 system_instruction=instruccion,
                 tools=TODAS,
             ),
+            history=historial,
         )
+
+    def reconectar(self) -> None:
+        """Conexión nueva (sin perder la conversación) tras un fallo de red."""
+        self._conectar(self._chat.get_history())
 
     def responder(self, mensaje: str) -> str:
         antes = len(self._chat.get_history())
