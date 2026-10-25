@@ -1,0 +1,9 @@
+google-genai>=2.33
+rich>=15.0
+python-dotenv>=1.2
+piper-tts>=1.8
+numpy>=2.0
+faster-whisper>=1.2
+vosk>=0.3
+ddgs>=9.0
+yt-dlp>=2026.10
