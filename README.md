@@ -56,6 +56,7 @@ Dentro de NAVI: **escribe**, o pulsa **Enter vacío** para hablarle. `salir` par
 - Abrir apps, volumen, brillo, Bluetooth (batería, conectar, emparejar)
 - Estado del PC (CPU, RAM, temperatura, batería) y actualizaciones pendientes
 - Apagar, reiniciar o suspender (ahora o programado), siempre preguntándote antes
+- Instalar y desinstalar programas («NAVI, instala OBS»): te pregunta antes y tú escribes tu contraseña en una terminal, NAVI nunca la ve
 - Ventanas y workspaces *(solo en Sway)*
 
 **Día a día**
