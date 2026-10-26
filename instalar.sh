@@ -71,17 +71,21 @@ else
     chmod 600 .env
     nota "Necesitas una API key GRATIS de Gemini: https://aistudio.google.com/apikey"
     read -r -s -p "  Pégala aquí (no se verá mientras escribes) y pulsa Enter: " clave; echo
+    nota "Opcional: una API key GRATIS de Groq, de reserva por si Gemini se satura:"
+    nota "https://console.groq.com/keys (sin tarjeta)"
+    read -r -s -p "  Pégala aquí, o pulsa Enter para saltarlo: " groq; echo
     read -r -p "  ¿Cómo quieres que NAVI te llame? " nombre
     read -r -p "  ¿En qué ciudad vives? (para el clima, ej: Quito, Ecuador) " ciudad
-    python3 - "$clave" "$nombre" "$ciudad" <<'EOF'
+    python3 - "$clave" "$nombre" "$ciudad" "$groq" <<'EOF'
 import sys
 from pathlib import Path
-clave, nombre, ciudad = sys.argv[1:4]
+clave, nombre, ciudad, groq = sys.argv[1:5]
 env = Path(".env")
 texto = env.read_text()
 texto = texto.replace("GEMINI_API_KEY=pega-aqui-tu-api-key", f"GEMINI_API_KEY={clave.strip()}")
 texto = texto.replace("NAVI_USUARIO=\n", f"NAVI_USUARIO={nombre.strip()}\n")
 texto = texto.replace("NAVI_CIUDAD=\n", f"NAVI_CIUDAD={ciudad.strip()}\n")
+texto = texto.replace("GROQ_API_KEY=\n", f"GROQ_API_KEY={groq.strip()}\n")
 env.write_text(texto)
 EOF
     nota "Guardado en .env (solo tú puedes leerlo y nunca se sube a GitHub)."

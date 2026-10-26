@@ -14,6 +14,12 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 GEMINI_MODELO = os.environ.get("GEMINI_MODELO", "gemini-3.5-flash-lite").strip()
 # Si el principal se satura (pasa a veces), NAVI usa este un rato. Vacío = no usar reserva
 GEMINI_MODELO_RESERVA = os.environ.get("GEMINI_MODELO_RESERVA", "gemini-3.5-flash").strip()
+
+# Groq (opcional): otra IA gratis y muy rápida. Clave en https://console.groq.com/keys
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+GROQ_MODELO = os.environ.get("GROQ_MODELO", "llama-3.3-70b-versatile").strip()
+# Cuál usar primero: "gemini" o "groq". El otro (si tiene clave) queda de reserva
+IA = os.environ.get("NAVI_IA", "gemini").strip().lower()
 NOMBRE_USUARIO = os.environ.get("NAVI_USUARIO", "").strip()
 CIUDAD = os.environ.get("NAVI_CIUDAD", "").strip()  # para el clima
 # Dónde abrir los borradores de correo: "gmail" (web) o "predeterminado" (mailto:)
@@ -44,9 +50,15 @@ OIDO_MICROFONO = os.environ.get("NAVI_MICROFONO", "interno").strip()
 
 
 def validar() -> None:
-    if not GEMINI_API_KEY or GEMINI_API_KEY.startswith("pega-aqui"):
+    global GEMINI_API_KEY, GROQ_API_KEY
+    if GEMINI_API_KEY.startswith("pega-aqui"):
+        GEMINI_API_KEY = ""
+    if GROQ_API_KEY.startswith("pega-aqui"):
+        GROQ_API_KEY = ""
+    if not GEMINI_API_KEY and not GROQ_API_KEY:
         sys.exit(
-            "Falta GEMINI_API_KEY.\n"
+            "Falta una API key (GEMINI_API_KEY o GROQ_API_KEY).\n"
             "1. Consigue una gratis en https://aistudio.google.com/apikey\n"
+            "   o en https://console.groq.com/keys\n"
             "2. Copia .env.example a .env y pégala ahí."
         )
