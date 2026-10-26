@@ -17,7 +17,7 @@ GEMINI_MODELO_RESERVA = os.environ.get("GEMINI_MODELO_RESERVA", "gemini-3.5-flas
 
 # Groq (opcional): otra IA gratis y muy rápida. Clave en https://console.groq.com/keys
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
-GROQ_MODELO = os.environ.get("GROQ_MODELO", "llama-3.3-70b-versatile").strip()
+GROQ_MODELO = os.environ.get("GROQ_MODELO", "openai/gpt-oss-120b").strip()
 # Cuál usar primero: "gemini" o "groq". El otro (si tiene clave) queda de reserva
 IA = os.environ.get("NAVI_IA", "gemini").strip().lower()
 NOMBRE_USUARIO = os.environ.get("NAVI_USUARIO", "").strip()
