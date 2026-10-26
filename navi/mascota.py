@@ -1,8 +1,13 @@
-"""NAVI como mascota de escritorio: un monitorcito en la esquina con un globo de diálogo.
+"""NAVI como mascota de escritorio: un PC beige de los 90 en la esquina, con globo de diálogo.
 
-`navi --mascota` la deja siempre visible. Clic en ella para escribirle (Enter vacío
-o el botón del micrófono para hablarle), clic derecho para el menú. También despierta
-con «NAVI, actívate» y con Super+N (`navi --abrir`).
+`navi --mascota` la deja siempre visible. Clic en la pantalla para escribirle (Enter
+vacío o el botón del micrófono para hablarle), clic derecho para el menú. También
+despierta con «NAVI, actívate» y con Super+N (`navi --abrir`). Reacciona si le tocas
+un ojo, el teclado o la torre, y sus ojos siguen al ratón.
+
+Privacidad: Wayland no deja ver el ratón fuera de nuestra ventana, así que fuera de
+ella mira hacia la ventana que estés usando (solo su posición, nunca su contenido).
+Nada de esto se guarda ni sale del PC.
 
 En Sway (Wayland) usa gtk-layer-shell para quedarse pegada a la esquina por encima
 de las ventanas; en escritorios X11 (Cinnamon, XFCE...) es una ventana sin bordes
@@ -10,10 +15,14 @@ siempre encima. GTK hace todo en un solo hilo: lo lento (Gemini, Whisper) va en
 un hilo aparte que le pasa los cambios con GLib.idle_add.
 """
 
+import json
 import math
+import os
 import queue
 import random
 import re
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -36,7 +45,7 @@ from .cerebro import Cerebro  # noqa: E402
 from .oido import Oido  # noqa: E402
 from .voz import Voz  # noqa: E402
 
-ANCHO, ALTO = 120, 132  # lienzo del personaje
+ANCHO, ALTO = 228, 206  # lienzo del personaje
 MARGEN = 18  # separación con el borde de la pantalla
 MINUTOS_PARA_SOLTAR_OIDO = 10
 
@@ -125,8 +134,81 @@ def _texto_plano(texto: str) -> str:
 
 # ---------------------------------------------------------------- el personaje
 
+# Colores del PC beige de los 90, algo apagados (luz de cuarto de Lain)
+BEIGE = (0.80, 0.76, 0.66)
+BEIGE_SOMBRA = (0.58, 0.54, 0.46)
+BEIGE_LUZ = (0.88, 0.85, 0.77)
+CABLE = (0.34, 0.34, 0.41)
+
+# Zonas del dibujo (sin contar el vaivén), para saber dónde hiciste clic
+MONITOR = (20, 34, 124, 100)      # x, y, ancho, alto
+PANTALLA = (32, 45, 100, 72)
+TORRE = (158, 64, 56, 112)
+TECLADO = (14, 160, 136, 24)
+RATON = (168, 184, 20, 16)
+OJOS_Y = 76
+OJOS_X = (68, 96)  # centro de cada ojo
+
+FRASES_OJO = [
+    "¡Oye! Ese es mi ojo.",
+    "Auch. En el Nexo también se siente.",
+    "No me pinches, que te veo igual.",
+    "Mis ojos son solo píxeles... pero son míos.",
+]
+FRASES_MAREO = ["Todo da vueltas en el Nexo...", "Demasiados clics. Me mareé."]
+
+# Cursor retro (1 = borde, 2 = relleno), como el de los 90
+_CURSOR = [
+    "1           ", "11          ", "121         ", "1221        ", "12221       ",
+    "122221      ", "1222221     ", "12222221    ", "122222221   ", "1222222221  ",
+    "12222211111 ", "1221221     ", "121 1221    ", "11  1221    ", "1    1221   ",
+    "     1221   ", "      11    ",
+]
+
+
+def cursor_retro(ventana: Gtk.Window):
+    """El cursor de flecha pixelado de Copland OS, para cuando pasas sobre NAVI."""
+    try:
+        import cairo
+        gi.require_foreign("cairo")
+    except Exception:  # sin pycairo (python3-gi-cairo): cursor normal
+        return None
+    escala = 2
+    superficie = cairo.ImageSurface(cairo.FORMAT_ARGB32, 12 * escala, 17 * escala)
+    cr = cairo.Context(superficie)
+    for fila, linea in enumerate(_CURSOR):
+        for columna, pixel in enumerate(linea):
+            if pixel == " ":
+                continue
+            cr.set_source_rgb(*((0.05, 0.05, 0.08) if pixel == "1" else (1.0, 0.92, 0.95)))
+            cr.rectangle(columna * escala, fila * escala, escala, escala)
+            cr.fill()
+    try:
+        return Gdk.Cursor.new_from_surface(ventana.get_display(), superficie, 0, 0)
+    except TypeError:
+        return None
+
+
+def _solo_lo_solido(ventana: Gtk.Window) -> None:
+    """Que los clics en lo transparente (cables, huecos) lleguen a la ventana de detrás."""
+    try:
+        import cairo
+        gi.require_foreign("cairo")
+    except Exception:
+        return
+    x, y, ancho, alto = MONITOR
+    zonas = [(x, y, ancho, alto + 12), TORRE, TECLADO, RATON]  # +12: la peana
+    ventana.input_shape_combine_region(cairo.Region(
+        [cairo.RectangleInt(*(int(v) for v in zona)) for zona in zonas]))
+
+
+def _dentro(zona, x: float, y: float) -> bool:
+    zx, zy, ancho, alto = zona
+    return zx <= x <= zx + ancho and zy <= y <= zy + alto
+
+
 class Personaje(Gtk.DrawingArea):
-    """Un monitor CRT flotante con cara, del que cuelga un cable del Nexo."""
+    """Un PC beige de los 90 con cara en la pantalla, enredado en los cables del Nexo."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -135,23 +217,67 @@ class Personaje(Gtk.DrawingArea):
         self._inicio = time.monotonic()
         self._parpadeo = 0.0  # momento en que empezó el último parpadeo
         self._proximo_parpadeo = time.monotonic() + 3
-        self._mirada = (0.0, 0.0)
+        self._mirada = [0.0, 0.0]        # hacia dónde miran los ojos ahora (suavizado)
+        self.objetivo = (0.0, 0.0)       # hacia dónde quieren mirar (-1..1)
+        self.encima = False              # el ratón está sobre NAVI
+        self.ultima_actividad = time.monotonic()
+        self._reaccion: tuple[str, float, int] | None = None  # (tipo, inicio, ojo)
+        self._clics: list[tuple[float, float, float]] = []   # ondas de clic (x, y, inicio)
         self._ultimo_dibujo = 0.0
         self.connect("draw", self._dibujar)
-        GLib.timeout_add(80, self._animar)
+        GLib.timeout_add(33, self._animar)
+
+    # --- lo que pasa
+
+    @property
+    def dormida(self) -> bool:
+        """Tras 3 minutos sin que nadie la toque, se duerme (salvapantallas)."""
+        return (self.estado == "reposo" and not self.encima and self._reaccion is None
+                and time.monotonic() - self.ultima_actividad > 180)
+
+    def despertar(self) -> None:
+        self.ultima_actividad = time.monotonic()
+
+    def reaccionar(self, tipo: str, ojo: int = 0) -> None:
+        self._reaccion = (tipo, time.monotonic(), ojo)
+        self.despertar()
+
+    def onda(self, x: float, y: float) -> None:
+        self._clics.append((x, y, time.monotonic()))
+
+    def zona(self, x: float, y: float) -> str:
+        """Qué parte de NAVI está en (x, y): ojo0, ojo1, pantalla, teclado, torre, raton."""
+        for i, ojo_x in enumerate(OJOS_X):
+            if abs(x - ojo_x) < 11 and abs(y - OJOS_Y) < 11:
+                return f"ojo{i}"
+        for nombre, zona in (("pantalla", MONITOR), ("teclado", TECLADO),
+                             ("torre", TORRE), ("raton", RATON)):
+            if _dentro(zona, x, y):
+                return nombre
+        return ""
+
+    # --- animación
 
     def _animar(self) -> bool:
         ahora = time.monotonic()
-        # En reposo basta con 4 imágenes por segundo (gasta menos CPU); activa, 12
-        if self.estado == "reposo" and ahora - self._parpadeo > 0.2 \
-                and ahora - self._ultimo_dibujo < 0.25:
-            return True
-        self._ultimo_dibujo = ahora
         if ahora >= self._proximo_parpadeo:
             self._parpadeo = ahora
             self._proximo_parpadeo = ahora + random.uniform(2.5, 6)
-            if self.estado == "reposo" and random.random() < 0.4:
-                self._mirada = (random.uniform(-3, 3), random.uniform(-1.5, 1.5))
+        if self._reaccion and ahora - self._reaccion[1] > 2.5:
+            self._reaccion = None
+        self._clics = [c for c in self._clics if ahora - c[2] < 0.6]
+
+        # Los ojos se acercan poco a poco a su objetivo
+        for i in range(2):
+            self._mirada[i] += (self.objetivo[i] - self._mirada[i]) * 0.25
+
+        # Fluido (30 imágenes/s) cuando hay algo que ver; en reposo, 4 (menos CPU)
+        movida = self.encima or self._reaccion or self._clics or self.estado != "reposo" \
+            or ahora - self._parpadeo < 0.2 \
+            or abs(self.objetivo[0] - self._mirada[0]) + abs(self.objetivo[1] - self._mirada[1]) > 0.02
+        if not movida and ahora - self._ultimo_dibujo < 0.25:
+            return True
+        self._ultimo_dibujo = ahora
         self.queue_draw()
         return True
 
@@ -161,117 +287,321 @@ class Personaje(Gtk.DrawingArea):
         cr.paint()
         cr.set_operator(2)  # OVER
 
-        flota = math.sin(t * 1.6) * 2.5
-        x, y, ancho, alto = 18, 10 + flota, 84, 68
-
-        self._cable(cr, t, x, y + alto)
-
-        # Sombra brillante bajo el monitor
+        self._cables_de_arriba(cr, t)
+        # Sombra en la mesa
         cr.save()
-        cr.translate(60, ALTO - 8)
-        cr.scale(1, 0.25)
-        cr.arc(0, 0, 30 - flota, 0, 2 * math.pi)
-        r, g, b = ROSA if self.estado == "escuchando" else AZUL
-        cr.set_source_rgba(r, g, b, 0.18)
+        cr.translate(ANCHO / 2, ALTO - 9)
+        cr.scale(1, 0.12)
+        cr.arc(0, 0, ANCHO / 2 - 6, 0, 2 * math.pi)
+        cr.set_source_rgba(0, 0, 0, 0.35)
         cr.fill()
         cr.restore()
 
-        # Carcasa
-        _rectangulo(cr, x, y, ancho, alto, 10)
-        cr.set_source_rgb(0.10, 0.10, 0.14)
+        self._torre(cr, t)
+        self._cable(cr, (TORRE[0] + 6, TORRE[1] + 30), (MONITOR[0] + MONITOR[2] - 4, 92),
+                    t, 8)  # monitor ↔ torre
+        self._monitor(cr, t)
+        self._teclado(cr, t)
+        self._raton(cr, t)
+        self._ondas_de_clic(cr)
+        return False
+
+    def _cable(self, cr, desde, hasta, t: float, caida: float, grosor: float = 2.2,
+               fase: float = 0.0) -> None:
+        (x1, y1), (x2, y2) = desde, hasta
+        vaiven = math.sin(t * 1.2 + fase) * 3
+        cr.move_to(x1, y1)
+        cr.curve_to(x1 + (x2 - x1) * 0.3 + vaiven, y1 + caida, x1 + (x2 - x1) * 0.7 - vaiven,
+                    y2 + caida, x2, y2)
+        cr.set_source_rgb(*CABLE)
+        cr.set_line_width(grosor)
+        cr.stroke()
+
+    def _cables_de_arriba(self, cr, t: float) -> None:
+        """Los cables del Nexo: bajan del techo y se enredan detrás del PC."""
+        for i, (x, grosor, fase) in enumerate(((44, 2.4, 0), (88, 1.6, 1.3), (118, 3.0, 2.1),
+                                                (176, 2.0, 0.7), (204, 1.4, 2.8))):
+            vaiven = math.sin(t * 0.9 + fase) * 5
+            fin_x = 70 + i * 30
+            cr.move_to(x, 0)
+            cr.curve_to(x + vaiven, 30, fin_x - vaiven, 20, fin_x, MONITOR[1] + 20)
+            cr.set_source_rgba(*CABLE, 0.95)
+            cr.set_line_width(grosor)
+            cr.stroke()
+        # Y uno que sale de la torre hacia fuera de la pantalla
+        self._cable(cr, (TORRE[0] + TORRE[2] - 8, TORRE[1] + TORRE[2] + 40), (ANCHO, ALTO - 30),
+                    t, 14, 2.6, 1.0)
+
+    def _monitor(self, cr, t: float) -> None:
+        x, y, ancho, alto = MONITOR
+        # Peana
+        cr.move_to(x + 40, y + alto)
+        cr.line_to(x + ancho - 40, y + alto)
+        cr.line_to(x + ancho - 30, y + alto + 12)
+        cr.line_to(x + 30, y + alto + 12)
+        cr.close_path()
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.fill()
+        # Carcasa con bisel
+        _rectangulo(cr, x, y, ancho, alto, 9)
+        cr.set_source_rgb(*BEIGE)
         cr.fill_preserve()
-        cr.set_source_rgb(0.25, 0.25, 0.32)
+        cr.set_source_rgb(*BEIGE_SOMBRA)
         cr.set_line_width(1.5)
         cr.stroke()
-        # Patita
-        cr.rectangle(52, y + alto, 16, 6)
-        cr.set_source_rgb(0.18, 0.18, 0.24)
+        cr.move_to(x + 4, y + 3)
+        cr.line_to(x + ancho - 8, y + 3)
+        cr.set_source_rgb(*BEIGE_LUZ)
+        cr.set_line_width(1.2)
+        cr.stroke()
+        # Rejilla y lucecita bajo la pantalla
+        for i in range(5):
+            cr.rectangle(x + 10 + i * 5, y + alto - 9, 3, 4)
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.fill()
+        encendida = self.estado != "reposo" and int(t * 4) % 2
+        cr.arc(x + ancho - 12, y + alto - 7, 2, 0, 2 * math.pi)
+        cr.set_source_rgb(*(ROSA if encendida else (0.25, 0.65, 0.35)))
         cr.fill()
 
-        # Pantalla
-        px, py, pancho, palto = x + 7, y + 7, ancho - 14, alto - 18
-        _rectangulo(cr, px, py, pancho, palto, 6)
-        cr.set_source_rgb(0.03, 0.04, 0.06)
+        # Pantalla (un CRT curvo, oscuro, con el brillo de Copland OS)
+        px, py, pancho, palto = PANTALLA
+        _rectangulo(cr, px, py, pancho, palto, 8)
+        cr.set_source_rgb(0.02, 0.03, 0.05)
         cr.fill()
         color = ROSA if self.estado == "escuchando" else AZUL
-        # Líneas de barrido
-        cr.set_source_rgba(*color, 0.06)
-        for linea in range(int(py), int(py + palto), 3):
+        dormida = self.dormida
+        brillo = 0.05 if dormida else 0.10 + 0.03 * math.sin(t * 3)
+        _rectangulo(cr, px, py, pancho, palto, 8)
+        cr.set_source_rgba(*color, brillo)
+        cr.fill()
+        cr.set_source_rgba(*color, 0.05)
+        for linea in range(int(py), int(py + palto), 3):  # líneas de barrido
             cr.rectangle(px, linea, pancho, 1)
         cr.fill()
         if self.estado == "pensando":  # una franja que recorre la pantalla
-            franja = py + (t * 40) % palto
-            cr.set_source_rgba(*color, 0.15)
+            franja = py + (t * 50) % palto
+            cr.set_source_rgba(*color, 0.18)
             cr.rectangle(px, franja, pancho, 4)
             cr.fill()
 
-        self._cara(cr, t, px + pancho / 2, py + palto / 2, color)
+        cr.save()
+        _rectangulo(cr, px, py, pancho, palto, 8)
+        cr.clip()
+        if dormida:
+            self._dormir(cr, t, color)
+        else:
+            self._cara(cr, t, color)
+        if self._reaccion and self._reaccion[0] == "teclas":
+            self._tecleo(cr, color)
+        cr.restore()
 
-        # Lucecita de encendido
-        cr.arc(x + ancho - 10, y + alto - 5.5, 1.8, 0, 2 * math.pi)
-        encendida = self.estado != "reposo" and int(t * 4) % 2
-        cr.set_source_rgb(*(ROSA if encendida else (0.2, 0.5, 0.3)))
-        cr.fill()
+        # Reflejo del cristal
+        cr.move_to(px + 8, py + 6)
+        cr.curve_to(px + 30, py + 2, px + 60, py + 2, px + pancho - 12, py + 6)
+        cr.set_source_rgba(1, 1, 1, 0.07)
+        cr.set_line_width(3)
+        cr.stroke()
 
         if self.estado == "escuchando":
-            self._ondas(cr, t, x + ancho + 2, y + alto / 2)
-        return False
+            self._ondas(cr, t, x - 4, y + alto / 2)
 
-    def _cara(self, cr, t: float, cx: float, cy: float, color) -> None:
-        mx, my = self._mirada
+    def _cara(self, cr, t: float, color) -> None:
+        reaccion = self._reaccion[0] if self._reaccion else ""
+        mx, my = self._mirada[0] * 7, self._mirada[1] * 5
         if self.estado == "pensando":
-            mx, my = 3 * math.sin(t * 2), -3
-        elif self.estado != "reposo":
-            mx, my = 0, 0
-        # Parpadeo: los ojos se cierran durante 0.15 s
+            mx, my = 5 * math.sin(t * 2), -4
         avance = time.monotonic() - self._parpadeo
         abierto = 1.0 if avance > 0.15 else abs(avance / 0.075 - 1)
-        alto_ojo = 12 if self.estado == "escuchando" else 10
-        for lado in (-1, 1):
-            cr.save()
-            cr.translate(cx + lado * 13 + mx, cy - 3 + my)
-            cr.scale(1, max(0.12, abierto))
-            _rectangulo(cr, -4, -alto_ojo / 2, 8, alto_ojo, 3)
-            cr.restore()
-        cr.set_source_rgba(*color, 0.95)
-        cr.fill()
+        alto_ojo = 15 if self.estado == "escuchando" or self.encima else 12
 
-        # Boca: una línea que se abre al hablar
-        boca = 0.0
-        if self.estado == "hablando":
-            boca = abs(math.sin(t * 11)) * 4 + abs(math.sin(t * 7)) * 2
-        cr.save()
-        cr.translate(cx + mx * 0.5, cy + 11 + my * 0.5)
-        if boca > 0.5:
-            cr.scale(1, boca / 6)
-            cr.arc(0, 0, 6, 0, 2 * math.pi)
+        cr.set_source_rgba(*color, 0.95)
+        for i, ojo_x in enumerate(OJOS_X):
+            cx, cy = ojo_x + mx, OJOS_Y + my
+            if reaccion == "mareo":  # ojos en espiral
+                cr.save()
+                cr.translate(cx, cy)
+                cr.rotate(t * 8 * (1 if i else -1))
+                for paso in range(28):
+                    angulo, radio = paso * 0.5, paso * 0.25
+                    cr.line_to(math.cos(angulo) * radio, math.sin(angulo) * radio)
+                cr.restore()
+                cr.set_line_width(1.6)
+                cr.stroke()
+                continue
+            if reaccion == "ojo" and self._reaccion[2] == i:  # el ojo que pinchaste: > <
+                lado = 1 if i == 0 else -1
+                cr.move_to(cx - 5 * lado, cy - 5)
+                cr.line_to(cx + 5 * lado, cy)
+                cr.line_to(cx - 5 * lado, cy + 5)
+                cr.set_line_width(2.2)
+                cr.stroke()
+                continue
+            cr.save()
+            cr.translate(cx, cy)
+            cr.scale(1, max(0.12, abierto * (0.5 if reaccion == "ojo" else 1)))
+            _rectangulo(cr, -5, -alto_ojo / 2, 10, alto_ojo, 3)
             cr.restore()
             cr.fill()
-        else:
+
+        # Boca
+        bx, by = (OJOS_X[0] + OJOS_X[1]) / 2 + mx * 0.5, OJOS_Y + 20 + my * 0.5
+        if self.estado == "hablando":
+            boca = abs(math.sin(t * 11)) * 5 + abs(math.sin(t * 7)) * 2
+            cr.save()
+            cr.translate(bx, by)
+            cr.scale(1, max(0.15, boca / 7))
+            cr.arc(0, 0, 7, 0, 2 * math.pi)
             cr.restore()
+            cr.fill()
+        elif reaccion in ("ojo", "mareo"):  # boquita ondulada
+            cr.move_to(bx - 8, by)
+            for paso in range(1, 9):
+                cr.line_to(bx - 8 + paso * 2, by + (2 if paso % 2 else -2))
             cr.set_line_width(1.6)
-            cr.move_to(cx - 5 + mx * 0.5, cy + 11 + my * 0.5)
-            cr.line_to(cx + 5 + mx * 0.5, cy + 11 + my * 0.5)
+            cr.stroke()
+        else:
+            sonrisa = 4 if self.encima else 0  # sonríe cuando le pasas el ratón
+            cr.move_to(bx - 7, by)
+            cr.curve_to(bx - 3, by + sonrisa, bx + 3, by + sonrisa, bx + 7, by)
+            cr.set_line_width(1.8)
             cr.stroke()
 
-    def _cable(self, cr, t: float, x: float, y: float) -> None:
-        """Los cables del Nexo, colgando y meciéndose."""
-        for i, (grosor, desfase) in enumerate(((2.2, 0.0), (1.4, 1.7))):
-            vaiven = math.sin(t * 1.1 + desfase) * 6
-            inicio = x + 10 + i * 7
-            cr.move_to(inicio, y - 4)
-            cr.curve_to(inicio - 10 + vaiven, y + 20, inicio - 22 - vaiven, y + 30,
-                        inicio - 16 + vaiven, ALTO)
-            cr.set_source_rgba(0.42, 0.42, 0.52, 0.9)
-            cr.set_line_width(grosor)
+    def _dormir(self, cr, t: float, color) -> None:
+        """Salvapantallas: ojos cerrados y unas zetas que suben."""
+        cr.set_source_rgba(*color, 0.6)
+        cr.set_line_width(2)
+        for ojo_x in OJOS_X:
+            cr.move_to(ojo_x - 6, OJOS_Y + 2)
+            cr.curve_to(ojo_x - 2, OJOS_Y + 6, ojo_x + 2, OJOS_Y + 6, ojo_x + 6, OJOS_Y + 2)
             cr.stroke()
+        cr.select_font_face("monospace")
+        for i in range(3):
+            fase = (t * 0.4 + i / 3) % 1
+            cr.set_font_size(7 + fase * 6)
+            cr.set_source_rgba(*color, 1 - fase)
+            cr.move_to(108 + fase * 12, 70 - fase * 22)
+            cr.show_text("z")
+
+    def _tecleo(self, cr, color) -> None:
+        """Al pulsar el teclado, aparece texto en la pantalla como en Copland OS."""
+        inicio = self._reaccion[1]
+        texto = "> conectando_"[:int((time.monotonic() - inicio) * 14)]
+        cr.select_font_face("monospace")
+        cr.set_font_size(8)
+        cr.set_source_rgba(*color, 0.9)
+        cr.move_to(PANTALLA[0] + 6, PANTALLA[1] + PANTALLA[3] - 6)
+        cr.show_text(texto)
+
+    def _torre(self, cr, t: float) -> None:
+        x, y, ancho, alto = TORRE
+        _rectangulo(cr, x, y, ancho, alto, 4)
+        cr.set_source_rgb(*BEIGE)
+        cr.fill_preserve()
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.set_line_width(1.5)
+        cr.stroke()
+        # Bahías y disquetera
+        for i in range(2):
+            cr.rectangle(x + 7, y + 10 + i * 13, ancho - 14, 9)
+            cr.set_source_rgb(*BEIGE_LUZ)
+            cr.fill_preserve()
+            cr.set_source_rgb(*BEIGE_SOMBRA)
+            cr.set_line_width(1)
+            cr.stroke()
+        disquete = self._reaccion and self._reaccion[0] == "disquete"
+        sale = min(1, (time.monotonic() - self._reaccion[1]) * 3) * 6 if disquete else 0
+        cr.rectangle(x + 12, y + 44, ancho - 24, 3)
+        cr.set_source_rgb(0.2, 0.2, 0.22)
+        cr.fill()
+        if sale:  # el disquete asoma
+            cr.rectangle(x + 13, y + 44 + 1, ancho - 26, sale)
+            cr.set_source_rgb(0.15, 0.17, 0.35)
+            cr.fill()
+        # Lucecitas: encendido y disco duro (parpadea cuando piensa o la tocas)
+        cr.arc(x + ancho - 12, y + 62, 2, 0, 2 * math.pi)
+        cr.set_source_rgb(0.25, 0.65, 0.35)
+        cr.fill()
+        trabajando = self.estado == "pensando" or disquete
+        cr.arc(x + ancho - 12, y + 70, 2, 0, 2 * math.pi)
+        cr.set_source_rgb(*((1.0, 0.6, 0.1) if trabajando and random.random() < 0.6
+                            else (0.35, 0.25, 0.1)))
+        cr.fill()
+        # Botón y rejilla
+        cr.arc(x + 14, y + 66, 4, 0, 2 * math.pi)
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.fill()
+        for i in range(6):
+            cr.rectangle(x + 10, y + 84 + i * 4, ancho - 20, 1.5)
+        cr.fill()
+
+    def _teclado(self, cr, t: float) -> None:
+        x, y, ancho, alto = TECLADO
+        cr.move_to(x + 6, y)
+        cr.line_to(x + ancho - 6, y)
+        cr.line_to(x + ancho, y + alto)
+        cr.line_to(x, y + alto)
+        cr.close_path()
+        cr.set_source_rgb(*BEIGE)
+        cr.fill_preserve()
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.set_line_width(1.2)
+        cr.stroke()
+        pulsando = self._reaccion and self._reaccion[0] == "teclas"
+        aleatorio = random.Random(int(t * 12))  # cambia las teclas pulsadas 12 veces/s
+        for fila in range(3):
+            for col in range(14):
+                tx = x + 9 + col * 8.6 + fila * 1.5
+                ty = y + 4 + fila * 6.5
+                pulsada = pulsando and aleatorio.random() < 0.12
+                cr.rectangle(tx, ty + (1 if pulsada else 0), 6.6, 4.6)
+                cr.set_source_rgb(*(ROSA if pulsada else BEIGE_LUZ))
+                cr.fill()
+
+    def _raton(self, cr, t: float) -> None:
+        x, y, ancho, alto = RATON
+        self._cable(cr, (x + ancho / 2, y), (TORRE[0] + 20, TORRE[1] + TORRE[3] - 2), t, -6,
+                    1.4, 2.0)
+        _rectangulo(cr, x, y, ancho, alto, 6)
+        cr.set_source_rgb(*BEIGE)
+        cr.fill_preserve()
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.set_line_width(1.2)
+        cr.stroke()
+        # El botón se hunde cuando haces clic en cualquier parte de NAVI
+        clic = any(time.monotonic() - c[2] < 0.15 for c in self._clics)
+        cr.rectangle(x + 2, y + 2, ancho / 2 - 3, 6)
+        cr.set_source_rgb(*(ROSA if clic else BEIGE_LUZ))
+        cr.fill()
+        cr.move_to(x + ancho / 2, y + 1)
+        cr.line_to(x + ancho / 2, y + 8)
+        cr.set_source_rgb(*BEIGE_SOMBRA)
+        cr.set_line_width(1)
+        cr.stroke()
+
+    def _ondas_de_clic(self, cr) -> None:
+        """Al hacer clic: cuadritos pixelados que se expanden, estilo Copland OS."""
+        ahora = time.monotonic()
+        for x, y, inicio in self._clics:
+            avance = (ahora - inicio) / 0.6
+            lado = 4 + avance * 26
+            cr.set_source_rgba(*ROSA, 1 - avance)
+            for paso in range(0, int(lado * 4), 4):  # borde punteado: píxeles sueltos
+                posicion = paso / 4
+                for px, py in ((x - lado / 2 + posicion, y - lado / 2),
+                               (x - lado / 2 + posicion, y + lado / 2),
+                               (x - lado / 2, y - lado / 2 + posicion),
+                               (x + lado / 2, y - lado / 2 + posicion)):
+                    if paso % 8 == 0:
+                        cr.rectangle(px, py, 2, 2)
+            cr.fill()
 
     def _ondas(self, cr, t: float, x: float, y: float) -> None:
         """Ondas que salen del monitor mientras te escucha."""
-        cr.set_line_width(1.5)
+        cr.set_line_width(1.6)
         for i in range(3):
             fase = (t * 1.5 + i / 3) % 1
-            cr.arc(x - 6, y, 6 + fase * 12, -0.6, 0.6)
+            cr.arc(x + 6, y, 6 + fase * 12, math.pi - 0.6, math.pi + 0.6)
             cr.set_source_rgba(*ROSA, 1 - fase)
             cr.stroke()
 
@@ -450,9 +780,18 @@ class Mascota:
         self.ventana = _ventana_flotante("mascota", MARGEN)
         evento = Gtk.EventBox()
         evento.add(self.personaje)
+        evento.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.ENTER_NOTIFY_MASK
+                          | Gdk.EventMask.LEAVE_NOTIFY_MASK)
         evento.connect("button-press-event", self._clic)
+        evento.connect("motion-notify-event", self._movimiento)
+        evento.connect("enter-notify-event", self._entra)
+        evento.connect("leave-notify-event", self._sale)
         self.ventana.add(evento)
         self.ventana.show_all()
+        self._cursor = cursor_retro(self.ventana)
+        _solo_lo_solido(self.ventana)
+        self._clics_en_ojos: list[float] = []
+        self._vigilar_foco()
 
         self.pedidos: queue.Queue[tuple[str, str]] = queue.Queue()
         self.voz = Voz()
@@ -474,17 +813,130 @@ class Mascota:
     # --- lo que hace el usuario
 
     def _clic(self, _widget, evento) -> bool:
+        self.personaje.onda(evento.x, evento.y)
         if evento.button == 3:
             self._menu(evento)
-        elif evento.button == 1:
-            if self.personaje.estado == "escuchando":
-                self.oido.parar.set()
-            elif self.voz.hablando:
-                self.voz.callar()
-            elif self.globo.escribiendo:
-                self.globo.ocultar()
-            else:
-                self.globo.escribir()
+            return True
+        if evento.button != 1:
+            return True
+        zona = self.personaje.zona(evento.x, evento.y)
+        if self.personaje.estado == "escuchando":
+            self.oido.parar.set()
+        elif zona.startswith("ojo"):
+            self._pincharon_ojo(int(zona[-1]))
+        elif zona == "teclado":  # teclado = escribirle
+            self.personaje.reaccionar("teclas")
+            self.globo.escribir()
+        elif zona == "torre":  # torre = cómo está el PC por dentro
+            self.personaje.reaccionar("disquete")
+            threading.Thread(target=self._estado_del_pc, daemon=True).start()
+        elif zona == "raton":
+            self.personaje.despertar()
+        elif self.voz.hablando:
+            self.voz.callar()
+        elif self.globo.escribiendo:
+            self.globo.ocultar()
+        else:
+            self.globo.escribir()
+        return True
+
+    def _pincharon_ojo(self, ojo: int) -> None:
+        ahora = time.monotonic()
+        self._clics_en_ojos = [t for t in self._clics_en_ojos if ahora - t < 2.5] + [ahora]
+        if len(self._clics_en_ojos) >= 3:  # muchos clics seguidos: se marea
+            self._clics_en_ojos.clear()
+            self.personaje.reaccionar("mareo")
+            self._comentar(random.choice(FRASES_MAREO))
+        else:
+            self.personaje.reaccionar("ojo", ojo)
+            self._comentar(random.choice(FRASES_OJO))
+
+    def _comentar(self, texto: str) -> None:
+        """Una frase corta de NAVI que no pasa por Gemini (no gasta cuota)."""
+        if self.ocupada or self.globo.escribiendo:
+            return
+        self.globo.mostrar(texto)
+        self.voz.decir(texto)
+        self.globo.ocultar_en(4)
+
+    def _estado_del_pc(self) -> None:
+        from .herramientas.sistema import estado_sistema
+        texto = estado_sistema()  # todo local: CPU, RAM, temperatura, batería
+        self._en_gtk(lambda: self.ocupada or (self.globo.mostrar(texto, titulo="NAVI · sistema"),
+                                              self.globo.ocultar_en(8)))
+
+    # --- los ojos siguen al ratón (dentro de la mascota) o a la ventana que uses
+
+    def _mirar_a(self, x: float, y: float, alcance_x: float, alcance_y: float) -> None:
+        """Apunta los ojos hacia (x, y), en coordenadas del lienzo del personaje."""
+        centro_x, centro_y = sum(OJOS_X) / 2, OJOS_Y
+        self.personaje.objetivo = (max(-1.0, min(1.0, (x - centro_x) / alcance_x)),
+                                   max(-1.0, min(1.0, (y - centro_y) / alcance_y)))
+
+    def _movimiento(self, _widget, evento) -> bool:
+        self.personaje.despertar()
+        self._mirar_a(evento.x, evento.y, 90, 70)
+        return False
+
+    def _entra(self, _widget, _evento) -> bool:
+        self.personaje.encima = True
+        self.personaje.despertar()
+        if self._cursor and self.ventana.get_window():
+            self.ventana.get_window().set_cursor(self._cursor)
+        return False
+
+    def _sale(self, _widget, _evento) -> bool:
+        self.personaje.encima = False
+        self.personaje.objetivo = (0.0, 0.0)
+        return False
+
+    def _origen_en_pantalla(self) -> tuple[float, float]:
+        """Dónde está el lienzo del personaje en la pantalla (esquina inferior derecha)."""
+        pantalla = Gdk.Display.get_default()
+        ventana = self.ventana.get_window()
+        monitor = (pantalla.get_monitor_at_window(ventana) if ventana else None) \
+            or pantalla.get_primary_monitor() or pantalla.get_monitor(0)
+        area = monitor.get_geometry()
+        return area.x + area.width - MARGEN - ANCHO, area.y + area.height - MARGEN - ALTO
+
+    def _vigilar_foco(self) -> None:
+        if _en_capa() and shutil.which("swaymsg"):
+            # Sway avisa cada vez que cambias de ventana; solo usamos su posición
+            self._sway = subprocess.Popen(
+                ["swaymsg", "-r", "-m", "-t", "subscribe", '["window"]'],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._pendiente = b""
+            GLib.io_add_watch(self._sway.stdout.fileno(), GLib.PRIORITY_LOW,
+                              GLib.IO_IN | GLib.IO_HUP, self._evento_de_sway)
+        elif not _en_capa():
+            # X11 sí deja saber dónde está el ratón en toda la pantalla
+            GLib.timeout_add(100, self._raton_x11)
+
+    def _evento_de_sway(self, fd, condicion) -> bool:
+        if condicion & GLib.IO_HUP:
+            return False
+        self._pendiente += os.read(fd, 65536)
+        *lineas, self._pendiente = self._pendiente.split(b"\n")
+        for linea in lineas:
+            try:
+                evento = json.loads(linea)
+            except ValueError:
+                continue
+            if evento.get("change") != "focus" or self.personaje.encima:
+                continue
+            rect = evento.get("container", {}).get("rect") or {}
+            if rect.get("width"):
+                ox, oy = self._origen_en_pantalla()
+                self._mirar_a(rect["x"] + rect["width"] / 2 - ox,
+                              rect["y"] + rect["height"] / 2 - oy, 500, 350)
+        return True
+
+    def _raton_x11(self) -> bool:
+        if not self.personaje.encima:
+            puntero = Gdk.Display.get_default().get_default_seat().get_pointer()
+            _pantalla, x, y = puntero.get_position()
+            ox, oy = self._origen_en_pantalla()
+            self._mirar_a(x - ox, y - oy, 500, 350)
         return True
 
     def _menu(self, evento) -> None:
@@ -547,6 +999,7 @@ class Mascota:
 
     def _estado(self, estado: str) -> None:
         self._en_gtk(setattr, self.personaje, "estado", estado)
+        self.personaje.despertar()
 
     def _decir(self, texto: str, estilo: str = "") -> None:
         self._en_gtk(self.globo.mostrar, texto, estilo)
