@@ -24,7 +24,8 @@ paso "1/7 Programas del sistema"
 if command -v apt-get >/dev/null; then
     deseados=(python3 python3-venv python3-pip git curl unzip espeak-ng mpv mpv-mpris
               playerctl ffmpeg pulseaudio-utils pipewire-bin bluez libnotify-bin
-              xclip wmctrl gnome-screenshot alsa-utils python3-gi python3-gi-cairo gir1.2-gtk-3.0)
+              xclip wmctrl gnome-screenshot alsa-utils python3-gi python3-gi-cairo gir1.2-gtk-3.0
+              cava jq)
     nota "Detecté apt (Linux Mint / Ubuntu / Debian)."
     sudo apt-get update -qq
     paquetes=()
@@ -36,7 +37,8 @@ elif command -v pacman >/dev/null; then
     nota "Detecté pacman (Arch / LainOS)."
     sudo pacman -S --needed --noconfirm python git curl unzip espeak-ng mpv mpv-mpris \
         playerctl ffmpeg libpulse pipewire bluez-utils libnotify wl-clipboard grim \
-        xclip wmctrl alsa-utils deno python-gobject python-cairo gtk3 gtk-layer-shell
+        xclip wmctrl alsa-utils deno python-gobject python-cairo gtk3 gtk-layer-shell \
+        cava jq
 else
     nota "No reconozco tu gestor de paquetes. Instala a mano: python3 (3.10+), venv,"
     nota "git, curl, unzip, espeak-ng, mpv, playerctl, ffmpeg y un portapapeles (xclip o wl-clipboard)."

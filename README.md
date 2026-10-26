@@ -83,6 +83,9 @@ El instalador te pregunta si quieres que aparezca al encender el PC.
 - Apagar, reiniciar o suspender (ahora o programado), siempre preguntándote antes
 - Instalar y desinstalar programas («NAVI, instala OBS»): te pregunta antes y tú escribes tu contraseña en una terminal, NAVI nunca la ve
 - Ventanas y workspaces *(solo en Sway)*
+- Modo techo: barras de audio moradas en un proyector HDMI que apunta al techo
+  («NAVI, techo», «techo voz», «apaga el techo»; también `./techo.sh musica|voz|apagar`).
+  Elige solo la salida HDMI y una resolución baja; si no hay proyector, te avisa *(solo en Sway)*
 
 **Día a día**
 - Recordatorios y temporizadores que suenan aunque NAVI esté cerrada

@@ -21,7 +21,7 @@ from google import genai
 from google.genai import errors, types
 
 from . import config, memoria, senales
-from .herramientas import TODAS
+from .herramientas import ATAJOS, TODAS
 
 # google-genai usa httpx2 si está instalado (viene con faster-whisper) y si no httpx
 try:
@@ -286,6 +286,11 @@ class Cerebro:
     def responder_seguro(self, mensaje: str) -> tuple[str, bool]:
         """Responde con el proveedor en uso; si está saturado, salta al siguiente.
         Los fallos vuelven como un aviso legible. Devuelve (texto, es_error)."""
+        for atajo in ATAJOS:
+            texto = atajo(mensaje)
+            if texto:
+                self._historial += [("user", mensaje), ("assistant", texto)]
+                return texto, False
         if self._indice and time.time() > self._volver_al_principal:
             self._indice, self._motor = 0, self._crear(0)
         ultimo = "No pude conectarme al Nexo."
