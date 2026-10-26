@@ -4,12 +4,14 @@ El micrófono solo se enciende cuando lo pides (Enter vacío) y se apaga
 solo cuando dejas de hablar. El audio nunca sale de tu PC.
 """
 
+import gc
 import os
 import select
 import shutil
 import subprocess
 import sys
 import threading
+import time
 
 import numpy as np
 
@@ -82,14 +84,36 @@ def _enter_presionado() -> bool:
 
 
 class Oido:
-    def __init__(self) -> None:
+    def __init__(self, perezoso: bool = False) -> None:
+        """perezoso: no cargar Whisper (~500 MB) hasta la primera vez que escuche.
+        Para la mascota, que pasa el día abierta sin que nadie le hable."""
         self._grabar = _comando_grabar()
         self._modelo = None
         self._listo = threading.Event()
+        self._cargando = False
+        self.ultimo_uso = time.monotonic()
         self.problema: str | None = None
-        if self.disponible:
-            # Cargamos Whisper en segundo plano para no demorar el arranque
+        self.parar = threading.Event()  # la mascota lo activa para dejar de grabar
+        if self.disponible and not perezoso:
+            self.preparar()
+
+    def preparar(self) -> None:
+        """Carga Whisper en segundo plano (si no estaba ya) para no hacerte esperar."""
+        if not self._cargando:
+            self._cargando = True
             threading.Thread(target=self._cargar, daemon=True).start()
+
+    def soltar(self) -> None:
+        """Descarga Whisper para devolver la memoria; se recarga al volver a escuchar."""
+        if self._listo.is_set():
+            self._listo.clear()
+            self._modelo = None
+            self._cargando = False
+            gc.collect()
+
+    @property
+    def cargado(self) -> bool:
+        return self._listo.is_set()
 
     @property
     def disponible(self) -> bool:
@@ -107,6 +131,8 @@ class Oido:
         Devuelve audio vacío si nadie habló; en ese caso self.problema
         explica si fue culpa del micrófono."""
         self.problema = None
+        self.parar.clear()
+        self.preparar()  # mientras hablas, Whisper termina de cargar
         proceso = subprocess.Popen(self._grabar, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL)
         trozos: list[np.ndarray] = []
@@ -124,7 +150,7 @@ class Oido:
                     break
                 if not datos:
                     break
-                if _enter_presionado():
+                if _enter_presionado() or self.parar.is_set():
                     trozos.append(np.frombuffer(datos, dtype=np.int16).astype(np.float32) / 32768)
                     hablando = hablando or umbral is not None
                     break
@@ -169,6 +195,7 @@ class Oido:
         if len(audio) == 0:
             return ""
         self._listo.wait()
+        self.ultimo_uso = time.monotonic()
         segmentos, _ = self._modelo.transcribe(audio, language="es", beam_size=1,
                                                vad_filter=True, initial_prompt=PISTA)
         texto = " ".join(s.text.strip() for s in segmentos).strip()

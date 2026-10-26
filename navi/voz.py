@@ -190,6 +190,11 @@ class Voz:
         audio = cambiar_tono(audio, config.VOZ_TONO)
         return filtro_wired(audio, tasa, config.VOZ_FILTRO), tasa
 
+    @property
+    def hablando(self) -> bool:
+        """True mientras prepara o dice una frase (la mascota mueve la boca)."""
+        return self._hilo is not None and self._hilo.is_alive()
+
     def decir(self, texto: str) -> None:
         """Habla en segundo plano; corta lo que estuviera diciendo antes."""
         if not self.activa:

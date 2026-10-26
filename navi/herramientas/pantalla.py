@@ -106,7 +106,9 @@ def ver_pantalla(pregunta: str, toda_la_pantalla: bool = False, app: str = "") -
     except (subprocess.SubprocessError, OSError) as e:
         return f"No pude capturar la pantalla: {e}"
 
-    cliente = genai.Client(api_key=config.GEMINI_API_KEY)
+    # Tiempo límite: si Gemini no contesta, mejor avisar que dejar a NAVI colgada
+    cliente = genai.Client(api_key=config.GEMINI_API_KEY, http_options=types.HttpOptions(
+        timeout=40_000, retry_options=types.HttpRetryOptions(attempts=2, max_delay=3)))
     respuesta = cliente.models.generate_content(
         model=config.GEMINI_MODELO,
         contents=[types.Part.from_bytes(data=imagen, mime_type=tipo),

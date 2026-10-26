@@ -24,7 +24,7 @@ paso "1/7 Programas del sistema"
 if command -v apt-get >/dev/null; then
     deseados=(python3 python3-venv python3-pip git curl unzip espeak-ng mpv mpv-mpris
               playerctl ffmpeg pulseaudio-utils pipewire-bin bluez libnotify-bin
-              xclip wmctrl gnome-screenshot alsa-utils)
+              xclip wmctrl gnome-screenshot alsa-utils python3-gi gir1.2-gtk-3.0)
     nota "Detecté apt (Linux Mint / Ubuntu / Debian)."
     sudo apt-get update -qq
     paquetes=()
@@ -36,7 +36,7 @@ elif command -v pacman >/dev/null; then
     nota "Detecté pacman (Arch / LainOS)."
     sudo pacman -S --needed --noconfirm python git curl unzip espeak-ng mpv mpv-mpris \
         playerctl ffmpeg libpulse pipewire bluez-utils libnotify wl-clipboard grim \
-        xclip wmctrl alsa-utils deno
+        xclip wmctrl alsa-utils deno python-gobject gtk3 gtk-layer-shell
 else
     nota "No reconozco tu gestor de paquetes. Instala a mano: python3 (3.10+), venv,"
     nota "git, curl, unzip, espeak-ng, mpv, playerctl, ffmpeg y un portapapeles (xclip o wl-clipboard)."
@@ -55,7 +55,9 @@ python3 - <<'EOF' || { echo "NAVI necesita Python 3.10 o más nuevo."; exit 1; }
 import sys
 sys.exit(sys.version_info < (3, 10))
 EOF
-[[ -d .venv ]] || python3 -m venv .venv
+# --system-site-packages: la mascota usa GTK (python3-gi), que viene del sistema
+[[ -d .venv ]] || python3 -m venv --system-site-packages .venv
+sed -i 's/^include-system-site-packages = false/include-system-site-packages = true/' .venv/pyvenv.cfg
 .venv/bin/pip install -q --upgrade pip
 nota "Instalando librerías (puede tardar unos minutos)..."
 .venv/bin/pip install -q -r requirements.txt
@@ -125,10 +127,10 @@ esac
 paso "6/7 Arranque automático"
 if [[ -n "${SWAYSOCK:-}" ]]; then
     nota "Usas Sway: agrega esto a ~/.config/sway/config si aún no lo tienes:"
-    nota "  bindsym \$mod+n exec alacritty --class navi --title NAVI -e $RAIZ/navi.sh"
+    nota "  bindsym \$mod+n exec $RAIZ/navi.sh --abrir"
     nota "  for_window [app_id=\"^navi\$\"] floating enable, resize set 900 560, move position center"
     nota "  exec $RAIZ/navi.sh --despertar"
-    nota "  exec $RAIZ/navi.sh --saludo"
+    nota "  exec $RAIZ/navi.sh --mascota --buenos-dias"
 else
     mkdir -p "$HOME/.config/autostart"
     if si "¿Activar «NAVI, actívate»? (el micrófono escucha SOLO esa frase, sin internet)"; then
@@ -142,7 +144,18 @@ X-GNOME-Autostart-Delay=5
 EOF
         setsid "$RAIZ/navi.sh" --despertar >/dev/null 2>&1 < /dev/null &
     fi
-    if si "¿Quieres que NAVI te salude al encender el PC (clima y recordatorios)?"; then
+    if si "¿Quieres a NAVI como mascota en una esquina de la pantalla? (te saluda al encender)"; then
+        cat > "$HOME/.config/autostart/navi-mascota.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=NAVI (mascota)
+Comment=NAVI en la esquina de la pantalla
+Exec=$RAIZ/navi.sh --mascota --buenos-dias
+X-GNOME-Autostart-Delay=10
+EOF
+        rm -f "$HOME/.config/autostart/navi-saludo.desktop"
+        setsid "$RAIZ/navi.sh" --mascota >/dev/null 2>&1 < /dev/null &
+    elif si "¿Quieres que NAVI te salude al encender el PC (clima y recordatorios)?"; then
         cat > "$HOME/.config/autostart/navi-saludo.desktop" <<EOF
 [Desktop Entry]
 Type=Application

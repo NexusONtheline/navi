@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from rich.console import Console
 from rich.text import Text
 
+from . import senales
+
 consola = Console(highlight=False)
 
 # Paleta inspirada en Copland OS / el Nexo
@@ -62,11 +64,15 @@ def pedir_mensaje(tuberia: int | None = None) -> str | None:
     consola.print(Text("> ", style=ACENTO), end="")
     consola.file.flush()
     fuentes = [sys.stdin] + ([tuberia] if tuberia is not None else [])
-    listo, _, _ = select.select(fuentes, [], [])
-    if tuberia is not None and tuberia in listo:
-        os.read(tuberia, 1024)
-        consola.print()
-        return None
+    while True:
+        listo, _, _ = select.select(fuentes, [], [])
+        if tuberia is not None and tuberia in listo:
+            # "escribir" (Super+N) no hace nada aquí: ya estás en la ventana para escribir
+            if "escuchar" in senales.leer_mensajes(tuberia):
+                consola.print()
+                return None
+        if sys.stdin in listo:
+            break
     linea = sys.stdin.readline()
     if not linea:
         raise EOFError

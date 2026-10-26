@@ -51,6 +51,22 @@ navi
 
 Dentro de NAVI: **escribe**, o pulsa **Enter vacío** para hablarle. `salir` para cerrarla.
 
+### NAVI como mascota
+
+NAVI también puede vivir en una esquina de la pantalla: un monitorcito con cara que
+flota, parpadea y te habla con un globo de diálogo.
+
+```bash
+navi --mascota
+```
+
+- **Clic** en ella para escribirle (Enter sin escribir nada, o 🎙, para hablarle).
+- **Clic derecho** para el menú: hablarle, silenciar la voz, modo privado, cerrar.
+- **Super+N** o **«NAVI, actívate»** también la despiertan.
+- Gasta poco: ~260 MB de RAM y ~1 % de CPU en reposo (el oído se carga solo cuando le hablas).
+
+El instalador te pregunta si quieres que aparezca al encender el PC.
+
 ## Qué sabe hacer
 
 **Voz** (todo local, sin internet)

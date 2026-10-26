@@ -9,7 +9,7 @@ import time
 
 import httpx
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from . import config, memoria, senales
 from .herramientas import TODAS
@@ -52,18 +52,24 @@ brevemente o pregunta si te hablaban a ti.
 """
 
 
+# Si el modelo principal se satura, NAVI usa el de reserva un rato y luego vuelve
+MINUTOS_EN_RESERVA = 10
+
+
 class Cerebro:
     def __init__(self) -> None:
+        self._modelo = config.GEMINI_MODELO
+        self._volver_al_principal = 0.0  # cuándo dejar el modelo de reserva
         self._conectar()
 
     def _conectar(self, historial=None) -> None:
-        # Tiempo límite corto: a veces Gemini se queda callado sin responder nunca,
-        # y un segundo intento suele contestar al momento. Mejor avisar que colgarse.
+        # Tiempo límite corto: a veces Gemini se queda callado sin responder nunca.
+        # Lo normal es que conteste en 1-3 s; si no, mejor probar el modelo de reserva.
         self._cliente = genai.Client(
             api_key=config.GEMINI_API_KEY,
             http_options=types.HttpOptions(
-                timeout=20_000,  # milisegundos, por cada petición
-                retry_options=types.HttpRetryOptions(attempts=3, max_delay=3),
+                timeout=10_000,  # milisegundos, por cada petición
+                retry_options=types.HttpRetryOptions(attempts=1),
             ),
         )
         instruccion = PERSONALIDAD
@@ -74,7 +80,7 @@ class Cerebro:
                             "Úsalo con naturalidad cuando venga al caso, sin recitarlo:\n"
                             + recuerdos)
         self._chat = self._cliente.chats.create(
-            model=config.GEMINI_MODELO,
+            model=self._modelo,
             config=types.GenerateContentConfig(
                 system_instruction=instruccion,
                 tools=TODAS,
@@ -82,9 +88,47 @@ class Cerebro:
             history=historial,
         )
 
-    def reconectar(self) -> None:
-        """Conexión nueva (sin perder la conversación) tras un fallo de red."""
+    def _cambiar_modelo(self, modelo: str) -> None:
+        self._modelo = modelo
         self._conectar(self._chat.get_history())
+
+    def responder_seguro(self, mensaje: str) -> tuple[str, bool]:
+        """Como responder(), pero los fallos de Gemini vuelven como un aviso legible.
+        Si el modelo principal está saturado, prueba con el de reserva.
+        Devuelve (texto, es_error)."""
+        reserva = config.GEMINI_MODELO_RESERVA
+        if self._modelo != config.GEMINI_MODELO and time.time() > self._volver_al_principal:
+            self._cambiar_modelo(config.GEMINI_MODELO)
+        try:
+            return self.responder(mensaje), False
+        except (errors.APIError, *ERRORES_DE_RED) as e:
+            # Saturado, sin cuota (cada modelo tiene la suya) o sin respuesta: probamos la reserva
+            saturado = (isinstance(e, ERRORES_DE_RED + (errors.ServerError,))
+                        or getattr(e, "code", None) == 429)
+            if not saturado or not reserva or self._modelo == reserva:
+                return self._explicar(e), True
+
+        self._cambiar_modelo(reserva)
+        self._volver_al_principal = time.time() + MINUTOS_EN_RESERVA * 60
+        try:
+            return self.responder(mensaje), False
+        except (errors.APIError, *ERRORES_DE_RED) as e:
+            return self._explicar(e), True
+
+    def _explicar(self, e: Exception) -> str:
+        if isinstance(e, errors.ClientError):
+            if e.code == 429:
+                return "Límite gratuito de Gemini alcanzado. Espera un poco e intenta de nuevo."
+            if e.code in (400, 403) and "API key" in str(e):
+                return "La API key no es válida. Revisa tu archivo .env."
+            if e.code == 404:
+                return f"El modelo '{self._modelo}' no existe. Cambia GEMINI_MODELO en .env."
+            return f"Gemini respondió con un error: {e}"
+        if isinstance(e, errors.ServerError):
+            return "Los servidores de Gemini están saturados. Intenta en un momento."
+        # Sin internet o Gemini no contesta: conexión nueva para el próximo intento
+        self._conectar(self._chat.get_history())
+        return "No pude conectarme al Nexo: Gemini no respondió. Intenta de nuevo."
 
     def responder(self, mensaje: str) -> str:
         antes = len(self._chat.get_history())

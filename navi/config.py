@@ -12,6 +12,8 @@ load_dotenv(RAIZ / ".env")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 # Versión liviana: rápida y con buena cuota gratis
 GEMINI_MODELO = os.environ.get("GEMINI_MODELO", "gemini-3.5-flash-lite").strip()
+# Si el principal se satura (pasa a veces), NAVI usa este un rato. Vacío = no usar reserva
+GEMINI_MODELO_RESERVA = os.environ.get("GEMINI_MODELO_RESERVA", "gemini-3.5-flash").strip()
 NOMBRE_USUARIO = os.environ.get("NAVI_USUARIO", "").strip()
 CIUDAD = os.environ.get("NAVI_CIUDAD", "").strip()  # para el clima
 # Dónde abrir los borradores de correo: "gmail" (web) o "predeterminado" (mailto:)

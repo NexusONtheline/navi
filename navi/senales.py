@@ -1,7 +1,8 @@
 """Señales entre NAVI y el vigilante de "NAVI, actívate".
 
 Todo vive en una carpeta temporal del usuario que se borra al apagar el PC:
-- despertar: tubería (FIFO) por la que el vigilante le dice a NAVI "escucha".
+- despertar: tubería (FIFO) por la que el vigilante le dice a NAVI "escucha"
+             (o el atajo Super+N le dice "escribir").
 - ocupada:   existe mientras NAVI habla o escucha (el vigilante la ignora).
 - privado:   existe en modo privado (el vigilante suelta el micrófono).
 """
@@ -72,9 +73,12 @@ def en_modo_privado() -> bool:
     return PRIVADO.exists()
 
 
-def abrir_tuberia() -> int:
-    """Crea la tubería y la abre para leer. Devuelve el descriptor."""
+def abrir_tuberia() -> int | None:
+    """Crea la tubería y la abre para leer. Devuelve el descriptor, o None si ya
+    hay otra NAVI abierta escuchándola (por ejemplo, la mascota)."""
     _preparar()
+    if pid_navi() not in (None, os.getpid()):
+        return None
     TUBERIA.unlink(missing_ok=True)
     os.mkfifo(TUBERIA, 0o600)
     PID_NAVI.write_text(str(os.getpid()))
@@ -86,8 +90,19 @@ def abrir_tuberia() -> int:
 
 
 def cerrar_tuberia() -> None:
+    """Solo si la tubería es nuestra (o de una NAVI que se cerró a la fuerza)."""
+    if pid_navi() not in (None, os.getpid()):
+        return
     TUBERIA.unlink(missing_ok=True)
     PID_NAVI.unlink(missing_ok=True)
+
+
+def leer_mensajes(fd: int) -> list[str]:
+    """Lo que llegó por la tubería: "escuchar" y/o "escribir"."""
+    try:
+        return os.read(fd, 1024).decode(errors="replace").split()
+    except BlockingIOError:
+        return []
 
 
 def pid_navi() -> int | None:
@@ -96,14 +111,15 @@ def pid_navi() -> int | None:
     return pid if pid is not None and _proceso_vivo(pid) else None
 
 
-def avisar_a_navi() -> bool:
-    """Le dice a la NAVI abierta que escuche. False si no hay ninguna abierta."""
+def avisar_a_navi(mensaje: str = "escuchar") -> bool:
+    """Le dice a la NAVI abierta que escuche (o que te deje escribir).
+    False si no hay ninguna abierta."""
     try:
         fd = os.open(TUBERIA, os.O_WRONLY | os.O_NONBLOCK)
     except OSError:  # no existe, o nadie la está leyendo (NAVI cerrada)
         return False
     try:
-        os.write(fd, b"escuchar\n")
+        os.write(fd, f"{mensaje}\n".encode())
     finally:
         os.close(fd)
     return True

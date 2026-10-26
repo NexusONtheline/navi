@@ -3,10 +3,8 @@
 import signal
 import sys
 
-from google.genai import errors
-
 from . import config, confirmaciones, interfaz, senales
-from .cerebro import ERRORES_DE_RED, Cerebro
+from .cerebro import Cerebro
 from .oido import Oido
 from .voz import Voz
 
@@ -16,7 +14,8 @@ AYUDA = """Uso: navi [opción]
 
   (sin opción)   abre NAVI
   --escuchar     abre NAVI y empieza a escucharte de inmediato
-  --abrir        abre NAVI en una ventana de terminal nueva (para atajos)
+  --abrir        para atajos: te deja escribirle a la NAVI abierta, o abre una nueva
+  --mascota      NAVI como personajito en la esquina de la pantalla (+ --buenos-dias)
   --despertar    inicia el vigilante de «NAVI, actívate»
   --saludo       NAVI te saluda (hora, clima, recordatorios de hoy)
   --privado      modo privado: el vigilante suelta el micrófono
@@ -44,25 +43,15 @@ def escuchar(oido: Oido) -> str:
 def responder(cerebro: Cerebro, voz: Voz, mensaje: str) -> None:
     try:
         with interfaz.pensando():
-            respuesta = cerebro.responder(mensaje)
-        interfaz.decir(respuesta)
-        voz.decir(respuesta)
-    except errors.ClientError as e:
-        if e.code == 429:
-            interfaz.error("Límite gratuito de Gemini alcanzado. Espera un poco e intenta de nuevo.")
-        elif e.code in (400, 403) and "API key" in str(e):
-            interfaz.error("La API key no es válida. Revisa tu archivo .env.")
-        elif e.code == 404:
-            interfaz.error(f"El modelo '{config.GEMINI_MODELO}' no existe. Cambia GEMINI_MODELO en .env.")
-        else:
-            interfaz.error(f"Gemini respondió con un error: {e}")
-    except errors.ServerError:
-        interfaz.error("Los servidores de Gemini están saturados. Intenta en un momento.")
-    except ERRORES_DE_RED:  # sin internet o Gemini no contesta
-        interfaz.error("No pude conectarme al Nexo: Gemini no respondió. Intenta de nuevo.")
-        cerebro.reconectar()
+            texto, es_error = cerebro.responder_seguro(mensaje)
     except KeyboardInterrupt:
         interfaz.error("Interrumpido.")
+        return
+    if es_error:
+        interfaz.error(texto)
+        return
+    interfaz.decir(texto)
+    voz.decir(texto)
 
 
 def conversar(escuchar_al_abrir: bool = False, buenos_dias: bool = False) -> None:
@@ -150,9 +139,20 @@ def main() -> None:
     elif opcion == "--brillo" and len(sys.argv) > 3:
         from .herramientas.ventanas import brillo
         brillo(sys.argv[2], int(sys.argv[3]))
-    elif opcion == "--abrir":  # para atajos de teclado: NAVI en su propia ventana
+    elif opcion == "--abrir":  # para atajos de teclado (Super+N)
         from . import escritorio
-        escritorio.abrir_en_terminal([str(config.RAIZ / "navi.sh")])
+        pid = senales.pid_navi()
+        if pid and senales.avisar_a_navi("escribir"):  # ya hay una NAVI: que te deje escribir
+            escritorio.traer_ventana(pid)
+        else:
+            escritorio.abrir_en_terminal([str(config.RAIZ / "navi.sh")])
+    elif opcion == "--mascota":
+        try:
+            from . import mascota
+        except (ImportError, ValueError) as e:  # falta GTK (python3-gi) o gtk-layer-shell
+            sys.exit(f"La mascota necesita GTK 3 para Python ({e}). "
+                     "Vuelve a ejecutar ./instalar.sh para instalarlo.")
+        mascota.main(buenos_dias="--buenos-dias" in sys.argv[2:])
     elif opcion == "--saludo":
         from .saludo import saludar
         saludar()
