@@ -5,6 +5,10 @@
 #   ./techo.sh voz      el micrófono
 #   ./techo.sh apagar   cierra la ventana del techo
 #
+# Para el holograma de la mascota (navi/holograma.py), sin abrir ventana:
+#   ./techo.sh preparar        busca el proyector, le baja la resolución y dice su nombre
+#   ./techo.sh fuente musica   dice de dónde escuchar (fuente de PulseAudio/PipeWire)
+#
 # Usa su propia config de cava (no toca ~/.config/cava/config).
 # Para otra salida que no empiece por HDMI: TECHO_SALIDA=DP-1 ./techo.sh musica
 # Códigos de salida: 0 bien, 1 error, 2 no hay proyector, 3 falta Sway o un programa,
@@ -13,6 +17,7 @@ set -u
 
 CARPETA="${XDG_RUNTIME_DIR:-/tmp}/navi"
 PID="$CARPETA/techo.pid"
+MODO="$CARPETA/techo.modo"  # musica o voz, mientras el techo está encendido
 CONF="$CARPETA/techo-cava.conf"
 CLASE="navi-techo"
 mkdir -p "$CARPETA"
@@ -25,62 +30,74 @@ encendido() {
 apagar() {
     if encendido; then
         kill "$(cat "$PID")"
-        rm -f "$PID"
+        rm -f "$PID" "$MODO"
         echo "Techo apagado."
     else
-        rm -f "$PID"
+        rm -f "$PID" "$MODO"
         echo "El techo ya estaba apagado."
+    fi
+}
+
+# El proyector: la primera salida HDMI que vea Sway, sin asumir su nombre.
+# Le pone resolución baja: 800x600, si no 1024x768, si no la más pequeña que ofrezca.
+preparar_proyector() {
+    if [[ -z ${SWAYSOCK:-} ]] || ! command -v swaymsg >/dev/null; then
+        echo "El modo techo solo funciona en Sway por ahora."; exit 3
+    fi
+    command -v jq >/dev/null || { echo "Me falta jq para el modo techo."; exit 3; }
+    local salidas modos preferido
+    salidas="$(swaymsg -t get_outputs -r)"
+    salida="${TECHO_SALIDA:-$(jq -r '[.[] | select(.name | test("^HDMI"))][0].name // empty' <<<"$salidas")}"
+    if [[ -z $salida ]] || ! jq -e --arg s "$salida" 'any(.[]; .name == $s)' <<<"$salidas" >/dev/null; then
+        echo "No veo el proyector conectado. Revisa el cable HDMI y que esté encendido."
+        exit 2
+    fi
+    modos="$(jq -r --arg s "$salida" '.[] | select(.name == $s) | .modes[] | "\(.width)x\(.height)"' <<<"$salidas" | sort -u)"
+    elegido=""
+    for preferido in 800x600 1024x768; do
+        if grep -qx "$preferido" <<<"$modos"; then elegido="$preferido"; break; fi
+    done
+    if [[ -z $elegido && -n $modos ]]; then
+        elegido="$(awk -Fx '{print $1 * $2, $0}' <<<"$modos" | sort -n | head -1 | cut -d' ' -f2)"
+    fi
+    if [[ -n $elegido ]]; then
+        swaymsg output "$salida" enable mode "$elegido" >/dev/null
+    else
+        swaymsg output "$salida" enable >/dev/null
+    fi
+}
+
+# De dónde escucha cava: el «monitor» de los parlantes, o un micrófono de verdad
+buscar_fuente() {
+    command -v pactl >/dev/null || { echo "Me falta pactl para el modo techo."; exit 3; }
+    if [[ $1 == musica ]]; then
+        fuente="$(pactl get-default-sink).monitor"
+    else
+        fuente="$(pactl get-default-source)"
+        if [[ -z $fuente || $fuente == *.monitor ]]; then  # eso no es un micrófono de verdad
+            fuente="$(pactl list short sources | awk '$2 !~ /\.monitor$/ {print $2; exit}')"
+        fi
+        if [[ -z $fuente ]]; then echo "No encuentro ningún micrófono."; exit 4; fi
     fi
 }
 
 modo="${1:-musica}"
 case "$modo" in
     apagar | apaga | off) apagar; exit 0 ;;
+    preparar) preparar_proyector; echo "$salida"; exit 0 ;;
+    fuente)
+        case "${2:-musica}" in voz | microfono | micrófono) buscar_fuente voz ;; *) buscar_fuente musica ;; esac
+        echo "$fuente"; exit 0 ;;
     musica | música) modo=musica ;;
     voz | microfono | micrófono) modo=voz ;;
     *) echo "Uso: $0 musica | voz | apagar" >&2; exit 1 ;;
 esac
 
-if [[ -z ${SWAYSOCK:-} ]] || ! command -v swaymsg >/dev/null; then
-    echo "El modo techo solo funciona en Sway por ahora."; exit 3
-fi
-for programa in cava alacritty pactl jq; do
+for programa in cava alacritty; do
     command -v "$programa" >/dev/null || { echo "Me falta $programa para el modo techo."; exit 3; }
 done
-
-# 1. El proyector: la primera salida HDMI que vea Sway, sin asumir su nombre
-salidas="$(swaymsg -t get_outputs -r)"
-salida="${TECHO_SALIDA:-$(jq -r '[.[] | select(.name | test("^HDMI"))][0].name // empty' <<<"$salidas")}"
-if [[ -z $salida ]] || ! jq -e --arg s "$salida" 'any(.[]; .name == $s)' <<<"$salidas" >/dev/null; then
-    echo "No veo el proyector conectado. Revisa el cable HDMI y que esté encendido."
-    exit 2
-fi
-
-# 2. Resolución baja: 800x600, si no 1024x768, si no la más pequeña que ofrezca
-modos="$(jq -r --arg s "$salida" '.[] | select(.name == $s) | .modes[] | "\(.width)x\(.height)"' <<<"$salidas" | sort -u)"
-elegido=""
-for preferido in 800x600 1024x768; do
-    if grep -qx "$preferido" <<<"$modos"; then elegido="$preferido"; break; fi
-done
-if [[ -z $elegido && -n $modos ]]; then
-    elegido="$(awk -Fx '{print $1 * $2, $0}' <<<"$modos" | sort -n | head -1 | cut -d' ' -f2)"
-fi
-if [[ -n $elegido ]]; then
-    swaymsg output "$salida" enable mode "$elegido" >/dev/null
-else
-    swaymsg output "$salida" enable >/dev/null
-fi
-
-# 3. De dónde escucha cava
-if [[ $modo == musica ]]; then
-    fuente="$(pactl get-default-sink).monitor"
-else
-    fuente="$(pactl get-default-source)"
-    if [[ -z $fuente || $fuente == *.monitor ]]; then  # eso no es un micrófono de verdad
-        fuente="$(pactl list short sources | awk '$2 !~ /\.monitor$/ {print $2; exit}')"
-    fi
-    if [[ -z $fuente ]]; then echo "No encuentro ningún micrófono."; exit 4; fi
-fi
+preparar_proyector
+buscar_fuente "$modo"
 
 # 4. Config propia de cava, con el degradado Lain (oscuro abajo, claro en los picos)
 cat >"$CONF" <<EOF
@@ -113,6 +130,7 @@ setsid alacritty --class "$CLASE" --title "NAVI techo" \
     -o 'colors.primary.background="#000000"' -o 'font.size=10' \
     -e cava -p "$CONF" </dev/null >/dev/null 2>&1 &
 echo $! >"$PID"
+echo "$modo" >"$MODO"
 
 for _ in $(seq 50); do  # hasta 5 s a que aparezca
     if swaymsg -t get_tree -r | jq -e --arg c "$CLASE" 'any(..; objects | .app_id? == $c)' >/dev/null; then

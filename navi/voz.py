@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -133,6 +134,16 @@ class _MotorEspeak:
         return datos.astype(np.float32) / 32768, tasa
 
 
+def envolvente(audio: np.ndarray, tasa: int, por_segundo: int = 30) -> np.ndarray:
+    """Volumen del audio (0 a 1) en trocitos de 1/30 s: para mover la boca al hablar."""
+    paso = max(1, tasa // por_segundo)
+    trozos = audio[: len(audio) // paso * paso].reshape(-1, paso)
+    if not len(trozos):
+        return np.zeros(0, dtype=np.float32)
+    rms = np.sqrt((trozos ** 2).mean(axis=1))
+    return rms / (np.percentile(rms, 95) or 1)
+
+
 def _reproductor() -> list[str] | None:
     for programa in ("pw-play", "paplay", "aplay"):
         if shutil.which(programa):
@@ -166,6 +177,8 @@ class Voz:
         self._reproductor = _reproductor()
         self._motor = self._crear_motor()
         self.activa_usuario = True  # se apaga con el comando "silencio"
+        self._envolvente: np.ndarray | None = None  # volumen de la frase que suena
+        self._sonando_desde = 0.0
 
     @property
     def activa(self) -> bool:
@@ -195,6 +208,14 @@ class Voz:
         """True mientras prepara o dice una frase (la mascota mueve la boca)."""
         return self._hilo is not None and self._hilo.is_alive()
 
+    def volumen(self) -> float:
+        """Qué tan fuerte suena la voz ahora mismo (0 a 1); el holograma mueve la boca con esto."""
+        envolvente = self._envolvente
+        if envolvente is None:
+            return 0.0
+        i = int((time.monotonic() - self._sonando_desde) * 30)
+        return min(1.0, float(envolvente[i])) if 0 <= i < len(envolvente) else 0.0
+
     def decir(self, texto: str) -> None:
         """Habla en segundo plano; corta lo que estuviera diciendo antes."""
         if not self.activa:
@@ -222,8 +243,11 @@ class Voz:
                     [*self._reproductor, str(ruta)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
+                self._envolvente, self._sonando_desde = envolvente(audio, tasa), time.monotonic()
             with senales.ocupada():  # que el vigilante no se active con su propia voz
                 self._proceso.wait()
+            if turno == self._turno:
+                self._envolvente = None
             ruta.unlink(missing_ok=True)
         except Exception:
             pass  # la voz nunca debe tumbar a NAVI
@@ -231,5 +255,6 @@ class Voz:
     def callar(self) -> None:
         with self._cerrojo:
             self._turno += 1
+            self._envolvente = None
             if self._proceso and self._proceso.poll() is None:
                 self._proceso.terminate()

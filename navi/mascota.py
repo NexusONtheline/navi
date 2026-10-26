@@ -42,6 +42,7 @@ except (ValueError, ImportError):
 from . import config, confirmaciones, senales  # noqa: E402
 from .__main__ import SALIDAS  # noqa: E402
 from .cerebro import Cerebro  # noqa: E402
+from .holograma import Holograma  # noqa: E402
 from .oido import Oido  # noqa: E402
 from .voz import Voz  # noqa: E402
 
@@ -800,6 +801,7 @@ class Mascota:
                            self.oido.parar.set)
         self.por_voz = False  # si el último mensaje fue hablado, las preguntas también
         self.ocupada = False
+        self.holograma = Holograma(self.personaje, self.voz)
 
         confirmaciones.registrar(self._preguntar)
         self.tuberia = senales.abrir_tuberia()
@@ -949,6 +951,12 @@ class Mascota:
              self._alternar_voz),
             ("Salir del modo privado" if privado else "Modo privado (no escucha «actívate»)",
              lambda: senales.modo_privado(not privado)),
+            ("Apagar el holograma" if self.holograma.encendido else "Holograma en el proyector",
+             self._alternar_holograma),
+            *([("Holograma de luz" if self.holograma.estilo == "color" else "Holograma a color",
+                lambda: self.holograma.cambiar_estilo(
+                    "lineas" if self.holograma.estilo == "color" else "color"))]
+              if self.holograma.encendido else []),
             ("Cerrar NAVI", Gtk.main_quit),
         ]
         for texto, accion in opciones:
@@ -957,6 +965,13 @@ class Mascota:
             menu.append(item)
         menu.show_all()
         menu.popup_at_pointer(evento)
+
+    def _alternar_holograma(self) -> None:
+        from .herramientas.techo import apagar_holograma, encender_holograma
+        orden = apagar_holograma if self.holograma.encendido else encender_holograma
+        # En otro hilo: la herramienta espera a que la mascota (este hilo) lo encienda
+        threading.Thread(target=lambda: self._en_gtk(self._comentar, orden()),
+                         daemon=True).start()
 
     def _alternar_voz(self) -> None:
         self.voz.activa_usuario = not self.voz.activa_usuario
@@ -977,6 +992,15 @@ class Mascota:
                 self.pedidos.put(("escuchar", ""))
             elif mensaje == "escribir":
                 self.globo.escribir()
+            elif mensaje.startswith("holograma:"):  # lo mandan las herramientas del techo
+                self.holograma.encender(mensaje.removeprefix("holograma:"))
+            elif mensaje == "holograma-apagar":
+                self.holograma.apagar()
+            elif mensaje.startswith("estilo:"):  # "color" o "lineas"
+                self.holograma.cambiar_estilo(mensaje.removeprefix("estilo:"))
+            elif mensaje.startswith("barras:"):
+                modo = mensaje.removeprefix("barras:")
+                self.holograma.barras(None if modo == "apagar" else modo)
         return True
 
     def _vigilar_voz(self) -> bool:
@@ -1099,10 +1123,14 @@ def main(buenos_dias: bool = False) -> None:
         # Ya hay una NAVI abierta: le pedimos que te deje escribir en vez de abrir otra
         senales.avisar_a_navi("escribir")
         return
-    Mascota(buenos_dias)
+    mascota = Mascota(buenos_dias)
+    marca = senales.CARPETA / "mascota.pid"  # así las herramientas saben que está abierta
+    marca.write_text(str(os.getpid()))
     try:
         Gtk.main()
     except KeyboardInterrupt:
         pass
     finally:
+        mascota.holograma.apagar()
+        marca.unlink(missing_ok=True)
         senales.cerrar_tuberia()

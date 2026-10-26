@@ -86,6 +86,9 @@ El instalador te pregunta si quieres que aparezca al encender el PC.
 - Modo techo: barras de audio moradas en un proyector HDMI que apunta al techo
   («NAVI, techo», «techo voz», «apaga el techo»; también `./techo.sh musica|voz|apagar`).
   Elige solo la salida HDMI y una resolución baja; si no hay proyector, te avisa *(solo en Sway)*
+- Holograma: NAVI de cuerpo entero en el proyector, escuchando, pensando y hablando como la
+  mascota («NAVI, holograma», «holograma de luz», «holograma a color», «apaga el holograma»).
+  Con «techo» le pones las barras de la música a sus pies *(necesita la mascota abierta)*
 
 **Día a día**
 - Recordatorios y temporizadores que suenan aunque NAVI esté cerrada
