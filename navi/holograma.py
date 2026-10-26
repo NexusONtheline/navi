@@ -36,7 +36,7 @@ try:
 except (ValueError, ImportError):
     GtkLayerShell = None
 
-ENCENDIDO = senales.CARPETA / "holograma"  # mientras se ve: «pid barras estilo»
+ENCENDIDO = senales.CARPETA / "holograma"  # mientras se ve: «pid barras diseño estilo»
 _CAVA_CONF = senales.CARPETA / "holograma-cava.conf"
 _TECHO = config.RAIZ / "techo.sh"
 
@@ -59,6 +59,17 @@ CABLE = (0.34, 0.34, 0.41)
 AZUL = (0.62, 0.80, 1.0)
 VERDE = (0.35, 0.85, 0.45)
 ESTILOS = ("color", "lineas")
+DISENOS = ("navi", "retro")
+
+# Su hoja de diseño, ya recortada (fondo transparente y chaqueta aclarada: en un
+# proyector el negro no se ve). Posiciones en pixeles de esa imagen.
+NAVI_IMAGEN = config.RAIZ / "navi" / "recursos" / "holograma-navi.png"
+NAVI_OJOS = ((137, 151), (173, 125))
+NAVI_OREJA = (207, 118)
+NAVI_LOGO = (203, 269, 37, 30)  # x, y, ancho, alto
+NAVI_CREMALLERA = ((196, 190), (148, 420))
+NAVI_ALTO_ORIGINAL = 1275
+NAVI_ALTO = 540  # en el lienzo de 800x600
 
 
 def _capsula(cr, a, b, ra: float, rb: float) -> None:
@@ -101,7 +112,8 @@ class Holograma:
         self._cava: subprocess.Popen | None = None
         self._pendiente = b""
         self.barras_modo: str | None = None
-        self.estilo = "color"  # "color" (beige, como el arte conceptual) o "lineas" (de luz)
+        self.estilo = "color"  # "color" (sus colores) o "lineas" (hecha de luz)
+        self.diseno = "navi"   # "navi" (su hoja de diseño) o "retro" (el PC beige con cuerpo)
         self._barras = np.zeros(N_BARRAS)
         self._inicio = time.monotonic()
         self._parpadeo = 0.0
@@ -172,6 +184,12 @@ class Holograma:
             self._figura_lista = None  # que se note ya, sin esperar al próximo dibujo
             self._guardar_estado()
 
+    def cambiar_diseno(self, diseno: str) -> None:
+        if diseno in DISENOS:
+            self.diseno = diseno
+            self._figura_lista = None
+            self._guardar_estado()
+
     def barras(self, modo: str | None) -> str:
         """Barras de audio a sus pies: "musica", "voz" o None para quitarlas."""
         if self._cava is not None:
@@ -196,7 +214,8 @@ class Holograma:
 
     def _guardar_estado(self) -> None:
         if self.encendido:
-            ENCENDIDO.write_text(f"{os.getpid()} {self.barras_modo or '-'} {self.estilo}\n")
+            ENCENDIDO.write_text(f"{os.getpid()} {self.barras_modo or '-'} {self.diseno} "
+                                 f"{self.estilo}\n")
 
     def _buscar_monitor(self, salida: str):
         """El monitor de GTK que es la salida `salida` de Sway (por su posición)."""
@@ -277,7 +296,8 @@ class Holograma:
             self._figura_hora = time.monotonic()
         figura = cairo.SurfacePattern(self._figura_lista)
         ampliar = cairo.Matrix()
-        ampliar.scale(CALIDAD, CALIDAD)
+        calidad = self._figura_lista.get_width() / LIENZO[0]
+        ampliar.scale(calidad, calidad)
         figura.set_matrix(ampliar)
         figura.set_filter(cairo.FILTER_GOOD)
         dormida = self._personaje.dormida
@@ -303,14 +323,19 @@ class Holograma:
 
     def _pintar_figura(self, t: float) -> cairo.ImageSurface:
         """NAVI con sus scanlines y la franja de luz, solo sobre su figura."""
-        superficie = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(LIENZO[0] * CALIDAD),
-                                        int(LIENZO[1] * CALIDAD))
+        # La de imagen se pinta a tamaño real (es barato); la retro, más pequeña
+        calidad = 1.0 if self.diseno == "navi" else CALIDAD
+        superficie = cairo.ImageSurface(cairo.FORMAT_ARGB32, int(LIENZO[0] * calidad),
+                                        int(LIENZO[1] * calidad))
         cr = cairo.Context(superficie)
-        cr.scale(CALIDAD, CALIDAD)
+        cr.scale(calidad, calidad)
         cr.set_tolerance(0.6)  # curvas con menos tramos: casi igual de bonitas, mucho más rápidas
-        self._figura(cr, t)
+        if self.diseno == "navi":
+            self._figura_navi(cr, t)
+        else:
+            self._figura(cr, t)
         cr.set_operator(cairo.OPERATOR_DEST_OUT)  # rayas: le quitan luz a la figura
-        cr.set_source_rgba(0, 0, 0, 0.35)
+        cr.set_source_rgba(0, 0, 0, 0.22 if self.diseno == "navi" else 0.35)
         for y in range(0, 560, 3):
             cr.rectangle(0, y, LIENZO[0], 1)
         cr.fill()
@@ -351,6 +376,124 @@ class Holograma:
         cr.set_source(degradado)
         cr.fill()
 
+    # --- NAVI (su hoja de diseño: androide de pelo plateado y chaqueta negra)
+
+    def _figura_navi(self, cr, t: float) -> None:
+        estado = self._personaje.estado
+        graves = float(self._barras[:8].mean()) if self.barras_modo else 0.0
+        hablar = self._boca if estado == "hablando" else 0.0
+        imagen = _imagen(self.estilo)
+        if imagen is None:  # falta el archivo: la retro, que se dibuja con código
+            self._figura(cr, t)
+            return
+        cr.save()
+        # Flota; con música, «baila». Solo se mueve a pixeles enteros y sin girar:
+        # así pintarla es copiarla, casi gratis.
+        x = round(400 - imagen.get_width() / 2)
+        y = round(560 - imagen.get_height() + math.sin(t * 1.3) * 7 - graves * 12)
+        cr.set_source_surface(imagen, x, y)
+        cr.paint()
+        cr.translate(x, y)
+        cr.scale(NAVI_ALTO / NAVI_ALTO_ORIGINAL, NAVI_ALTO / NAVI_ALTO_ORIGINAL)
+
+        # Ojos: brillan más cuando te oye o habla; se apagan un instante al parpadear
+        parpadeo = time.monotonic() - self._parpadeo < 0.15
+        dormida = self._personaje.dormida
+        if not (parpadeo or dormida):
+            fuerza = 0.25 + 0.15 * math.sin(t * 2) + hablar * 0.5 + (estado == "escuchando") * 0.35
+            for x, y in NAVI_OJOS:
+                brillo = cairo.RadialGradient(x, y, 0, x, y, 14)
+                brillo.add_color_stop_rgba(0, *self._color(AZUL), min(1.0, fuerza))
+                brillo.add_color_stop_rgba(1, *self._color(AZUL), 0)
+                cr.set_source(brillo)
+                cr.arc(x, y, 14, 0, 2 * math.pi)
+                cr.fill()
+
+        # Luces que recorren la cremallera: suben al pensar, laten con su voz
+        (x0, y0), (x1, y1) = NAVI_CREMALLERA
+        if estado == "pensando":
+            for k in range(3):
+                f = 1 - (t * 0.7 + k / 3) % 1
+                cr.arc(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, 4, 0, 2 * math.pi)
+                self._luz(cr, AZUL, 0.9)
+        elif hablar > 0.05 or estado == "escuchando":
+            cr.move_to(x0, y0)
+            cr.line_to(x1, y1)
+            cr.set_line_width(5)
+            cr.set_source_rgba(*self._color(AZUL), 0.25 + hablar * 0.6)
+            cr.stroke()
+
+        # Receptor de la oreja: ondas mientras escucha
+        if estado == "escuchando":
+            x, y = NAVI_OREJA
+            for k in range(3):
+                f = (t * 1.1 + k / 3) % 1
+                cr.arc(x, y, 8 + f * 40, -0.8, 0.8)
+                cr.set_line_width(2.5)
+                cr.set_source_rgba(*self._color(AZUL), 1 - f)
+                cr.stroke()
+
+        # El logo del pecho es su cara de pixeles (como la mascota)
+        x, y, ancho, alto = NAVI_LOGO
+        cr.rectangle(x - 1, y - 1, ancho + 2, alto + 2)
+        cr.set_source_rgb(*((0, 0, 0) if self.estilo == "lineas" else (0.10, 0.11, 0.14)))
+        cr.fill()
+        cr.rectangle(x, y, ancho, alto)
+        cr.set_source_rgba(*self._color(AZUL), 0.9)
+        cr.set_line_width(1.6)
+        cr.stroke()
+        self._cara_pixel(cr, x + ancho / 2, y + alto / 2, t, estado, hablar)
+
+        if dormida:  # zzz que salen de su cabeza
+            for i in range(3):
+                f = (t * 0.4 + i / 3) % 1
+                lado = 6 + 4 * i
+                cr.rectangle(215 + f * 40, 60 - f * 60, lado * (1 - f * 0.5), lado * (1 - f * 0.5))
+                self._luz(cr, AZUL, 1 - f)
+        cr.restore()
+
+    def _color(self, color):
+        return LILA if self.estilo == "lineas" and color != VERDE else color
+
+    def _cara_pixel(self, cr, cx: float, cy: float, t: float, estado: str, hablar: float) -> None:
+        """Cara de pixeles de 6 de ancho, centrada en (cx, cy): la misma de la mascota."""
+        p = 4.5  # tamaño de un pixel
+        reaccion = self._personaje._reaccion[0] if self._personaje._reaccion else ""
+        dormida = self._personaje.dormida
+        parpadeo = time.monotonic() - self._parpadeo < 0.15
+
+        def pixel(x: float, y: float, ancho: float = 1, alto: float = 1) -> None:
+            cr.rectangle(cx + x * p, cy + y * p, ancho * p, alto * p)
+
+        if reaccion == "mareo":
+            for x, y in ((-3, -2.5), (-1, -1.5), (1, -2.5), (2.5, -1), (-2, -0.5)):
+                pixel(x, y)
+            for k in range(5):
+                pixel(-2.5 + k, 1.5 - (0.4 if k % 2 else 0), 0.8, 0.8)
+            self._luz(cr, AZUL)
+            return
+        for lado in (-1, 1):  # ojos
+            if dormida or parpadeo:
+                pixel(lado * 2 - 0.8, -1.2, 1.6, 0.5)
+            elif estado == "pensando":
+                pixel(lado * 2 - 0.2, -1.8, 1, 0.7)
+            else:
+                pixel(lado * 2 - 0.5, -2, 1, 1.4 if estado == "escuchando" else 1)
+        if estado == "hablando":
+            alto = 0.5 + hablar * 1.6
+            pixel(-1.2, 1.2 - alto / 2, 2.4, alto)
+        elif estado == "escuchando":
+            for k in range(3):
+                alto = 0.5 + abs(math.sin(t * 9 + k * 1.4)) * 1.3
+                pixel(-1.5 + k * 1.1, 1 - alto / 2, 0.7, alto)
+        elif estado == "pensando" or dormida:
+            pixel(-1, 1, 2, 0.5)
+        else:  # sonrisa leve
+            pixel(-1.5, 0.8, 0.6, 0.6)
+            pixel(-1, 1.3, 2, 0.6)
+            pixel(0.9, 0.8, 0.6, 0.6)
+        self._luz(cr, AZUL)
+
     # --- NAVI (según el arte conceptual RETRO-UNIT-01: monitor de cabeza, torre de mochila)
 
     def _pieza(self, cr, tono: str) -> None:
@@ -387,7 +530,7 @@ class Holograma:
 
     def _luz(self, cr, color, alfa: float = 1.0) -> None:
         """Pixeles y lucecitas (cara, LEDs): en estilo líneas, todo es lila."""
-        cr.set_source_rgba(*(LILA if self.estilo == "lineas" and color != VERDE else color), alfa)
+        cr.set_source_rgba(*self._color(color), alfa)
         cr.fill()
 
     def _figura(self, cr, t: float) -> None:
@@ -681,6 +824,58 @@ def _rectangulo(cr, x: float, y: float, ancho: float, alto: float, radio: float)
     cr.arc(x + radio, y + alto - radio, radio, math.pi / 2, math.pi)
     cr.arc(x + radio, y + radio, radio, math.pi, 3 * math.pi / 2)
     cr.close_path()
+
+
+_IMAGENES: dict[str, cairo.ImageSurface | None] = {}
+
+
+def _imagen(estilo: str) -> cairo.ImageSurface | None:
+    """La imagen de NAVI; en estilo «lineas», solo sus bordes, hechos de luz lila."""
+    if estilo not in _IMAGENES:
+        try:
+            from PIL import Image
+            rgba = np.asarray(Image.open(NAVI_IMAGEN).convert("RGBA")).astype(np.float32) / 255
+        except (OSError, ImportError):
+            _IMAGENES[estilo] = None
+            return None
+        if estilo == "lineas":
+            gris = rgba[..., :3].mean(axis=2) * rgba[..., 3]
+            bordes = np.zeros_like(gris)
+            bordes[1:-1, 1:-1] = (np.abs(gris[2:, 1:-1] - gris[:-2, 1:-1])
+                                  + np.abs(gris[1:-1, 2:] - gris[1:-1, :-2]))
+            alfa = np.clip(bordes * 3.5, 0, 1)[..., None]
+            alfa = np.maximum(alfa, rgba[..., 3:] * 0.08)  # un velo suave de su silueta
+            rgba = np.dstack([np.broadcast_to(LILA, gris.shape + (3,)), alfa[..., 0]])
+        _IMAGENES[estilo] = _reducir(_a_superficie(rgba), NAVI_ALTO / NAVI_ALTO_ORIGINAL)
+    return _IMAGENES[estilo]
+
+
+def _reducir(superficie: cairo.ImageSurface, escala: float) -> cairo.ImageSurface:
+    """Se reduce una sola vez al cargarla (reducirla en cada imagen gastaba mucha CPU)."""
+    pequena = cairo.ImageSurface(cairo.FORMAT_ARGB32, round(superficie.get_width() * escala),
+                                 round(superficie.get_height() * escala))
+    cr = cairo.Context(pequena)
+    cr.scale(escala, escala)
+    cr.set_source_surface(superficie, 0, 0)
+    cr.get_source().set_filter(cairo.FILTER_BEST)
+    cr.paint()
+    return pequena
+
+
+def _a_superficie(rgba: np.ndarray) -> cairo.ImageSurface:
+    """De un array RGBA (0 a 1) a una superficie de cairo (BGRA premultiplicado)."""
+    alto, ancho = rgba.shape[:2]
+    datos = np.empty((alto, ancho, 4), dtype=np.uint8)
+    alfa = rgba[..., 3]
+    for i, canal in enumerate((2, 1, 0)):
+        datos[..., i] = (rgba[..., canal] * alfa * 255).astype(np.uint8)
+    datos[..., 3] = (alfa * 255).astype(np.uint8)
+    superficie = cairo.ImageSurface(cairo.FORMAT_ARGB32, ancho, alto)
+    paso = superficie.get_stride()
+    destino = np.ndarray((alto, paso), dtype=np.uint8, buffer=superficie.get_data())
+    destino[:, :ancho * 4] = datos.reshape(alto, ancho * 4)
+    superficie.mark_dirty()
+    return superficie
 
 
 def _bezier(a: float, b: float, c: float, d: float, f: float) -> float:

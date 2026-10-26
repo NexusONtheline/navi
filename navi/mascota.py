@@ -957,6 +957,11 @@ class Mascota:
                 lambda: self.holograma.cambiar_estilo(
                     "lineas" if self.holograma.estilo == "color" else "color"))]
               if self.holograma.encendido else []),
+            *([("Holograma: la NAVI retro" if self.holograma.diseno == "navi"
+                else "Holograma: NAVI androide",
+                lambda: self.holograma.cambiar_diseno(
+                    "retro" if self.holograma.diseno == "navi" else "navi"))]
+              if self.holograma.encendido else []),
             ("Cerrar NAVI", Gtk.main_quit),
         ]
         for texto, accion in opciones:
@@ -998,6 +1003,8 @@ class Mascota:
                 self.holograma.apagar()
             elif mensaje.startswith("estilo:"):  # "color" o "lineas"
                 self.holograma.cambiar_estilo(mensaje.removeprefix("estilo:"))
+            elif mensaje.startswith("diseno:"):  # "navi" o "retro"
+                self.holograma.cambiar_diseno(mensaje.removeprefix("diseno:"))
             elif mensaje.startswith("barras:"):
                 modo = mensaje.removeprefix("barras:")
                 self.holograma.barras(None if modo == "apagar" else modo)

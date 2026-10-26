@@ -94,25 +94,33 @@ def apagar_techo() -> str:
     return _techo("apagar")
 
 
-def encender_holograma(barras: str = "", estilo: str = "") -> str:
+def encender_holograma(barras: str = "", estilo: str = "", diseno: str = "") -> str:
     """Muestra a NAVI como holograma de cuerpo entero en el proyector HDMI (techo o pared).
-    Se mueve, escucha y habla igual que la mascota. También sirve para cambiarle el estilo.
+    Se mueve, escucha y habla igual que la mascota. También sirve para cambiarle el
+    estilo o el diseño.
 
     Args:
         barras: "musica" o "voz" para poner a sus pies las barras de audio del modo techo;
             vacío para no añadirlas (si el techo ya estaba encendido, sus barras se quedan).
-        estilo: "color" (beige, como la mascota) o "lineas" (hecho de luz morada);
+        estilo: "color" (sus colores) o "lineas" (hecha de luz morada); vacío para dejar el que tenga.
+        diseno: "navi" (la androide de pelo plateado) o "retro" (el PC beige con cuerpo);
             vacío para dejar el que tenga.
     """
     estilo = ("lineas" if any(p in estilo.lower() for p in ("line", "líne", "luz"))
               else "color" if estilo.strip() else "")
+    diseno = "retro" if "retro" in diseno.lower() else "navi" if diseno.strip() else ""
     if estilo:
         senales.avisar_a_navi(f"estilo:{estilo}")
-    if _holograma()[0] and estilo and not barras.strip():  # ya estaba: solo cambia el estilo
-        nombre = "de luz" if estilo == "lineas" else "a color"
-        if _esperar(lambda: (_campos_si_vive(_HOLOGRAMA) or [""])[-1] == estilo):
-            return f"Listo, ahora el holograma es {nombre}."
-        return "No pude cambiar el estilo del holograma."
+    if diseno:
+        senales.avisar_a_navi(f"diseno:{diseno}")
+    if _holograma()[0] and (estilo or diseno) and not barras.strip():  # ya estaba: solo cambia
+        def listo() -> bool:
+            campos = _campos_si_vive(_HOLOGRAMA) or []
+            return ((not diseno or diseno in campos[2:3])
+                    and (not estilo or estilo in campos[3:4]))
+        if _esperar(listo):
+            return "Listo, ya cambié el holograma."
+        return "No pude cambiar el holograma."
     if not _campos_si_vive(_MASCOTA):
         return ("El holograma vive dentro de la mascota: ábrela con «navi --mascota» "
                 "y vuelve a pedírmelo.")
@@ -178,6 +186,9 @@ _ATAJOS = {
     "holograma color": lambda: encender_holograma(estilo="color"),
     "holograma a color": lambda: encender_holograma(estilo="color"),
     "holograma en color": lambda: encender_holograma(estilo="color"),
+    "holograma retro": lambda: encender_holograma(diseno="retro"),
+    "holograma normal": lambda: encender_holograma(diseno="navi"),
+    "holograma androide": lambda: encender_holograma(diseno="navi"),
     "holograma apagar": apagar_holograma,
 }
 
