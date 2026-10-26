@@ -113,7 +113,7 @@ class Holograma:
         self._pendiente = b""
         self.barras_modo: str | None = None
         self.estilo = "color"  # "color" (sus colores) o "lineas" (hecha de luz)
-        self.diseno = "navi"   # "navi" (su hoja de diseño) o "retro" (el PC beige con cuerpo)
+        self.diseno = "retro"  # "retro" (el PC beige con cuerpo) o "navi" (su hoja de diseño)
         self._barras = np.zeros(N_BARRAS)
         self._inicio = time.monotonic()
         self._parpadeo = 0.0
