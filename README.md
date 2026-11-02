@@ -12,6 +12,8 @@ AVISO> NAVI esta en beta y se puede actualizar constantemente recuerda actualiar
 Asistente personal para Linux inspirado en NAVI de **Serial Experiments Lain**.
 Vive en tu terminal, te habla, te escucha y controla tu PC/Laptop. *uso vibecoding con claude*
 
+📺 **¿Tienes Google TV?** Mira también [NAVI TV](https://github.com/NexusONtheline/navi-tv): NAVI vive en la tele, reemplaza al asistente de Google y duerme con gorrito en el salvapantallas.
+
 **100% gratis**: usa la capa gratuita de la API de Gemini (cada persona pone su propia key, por ahora solo esta para key de gemini)
 y todo lo de voz funciona en tu PC, sin internet.
 
@@ -56,6 +58,13 @@ Dentro de NAVI: **escribe**, o pulsa **Enter vacío** para hablarle. `salir` par
 NAVI también puede vivir en una esquina de la pantalla: un PC beige de los 90, enredado
 en los cables del Nexo, que parpadea, te sigue con la mirada y te habla con un globo.
 
+<p align="center">
+  <img src="docs/img/mascota.gif" width="360" alt="La mascota de NAVI reaccionando: le pinchan un ojo, muestra la carga del PC y se pone a escuchar">
+</p>
+<p align="center">
+  <img src="docs/img/mascota-par.png" width="620" alt="NAVI: «¡Oye! Ese es mi ojo» y el estado del PC">
+</p>
+
 ```bash
 navi --mascota
 ```
@@ -69,6 +78,16 @@ navi --mascota
 - Gasta poco: ~260 MB de RAM y ~1 % de CPU en reposo (el oído se carga solo cuando le hablas).
 
 El instalador te pregunta si quieres que aparezca al encender el PC.
+
+### Modo techo y holograma
+
+¿Tienes un mini proyector? Conéctalo por HDMI y dile a NAVI **«techo»**: proyecta un visualizador
+de música (cava) en el techo. Con **«holograma»** aparece NAVI de cuerpo entero sobre fondo negro,
+para que parezca que flota, y reacciona cuando le hablas. **«holograma retro»** cambia al androide beige.
+
+<p align="center">
+  <img src="docs/img/holograma.gif" width="260" alt="Holograma de NAVI: androide retro con cabeza de monitor colgado de los cables">
+</p>
 
 ## Qué sabe hacer
 
