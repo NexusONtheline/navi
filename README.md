@@ -83,7 +83,8 @@ El instalador te pregunta si quieres que aparezca al encender el PC.
 
 ¿Tienes un mini proyector? Conéctalo por HDMI y dile a NAVI **«techo»**: proyecta un visualizador
 de música (cava) en el techo. Con **«holograma»** aparece NAVI de cuerpo entero sobre fondo negro,
-para que parezca que flota, y reacciona cuando le hablas. **«holograma retro»** cambia al androide beige.
+para que parezca que flota, con luces que se animan encima. Tiene dos diseños: el androide beige
+(**«holograma retro»**) y la NAVI androide de pelo plateado (**«holograma androide»**).
 
 <p align="center">
   <img src="docs/img/holograma.gif" width="260" alt="Holograma de NAVI: androide retro con cabeza de monitor colgado de los cables">
