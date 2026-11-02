@@ -72,6 +72,14 @@ def _leer(proceso: subprocess.Popen, cantidad: int, espera: float) -> bytes | No
     return datos
 
 
+def _muestras(datos: bytes) -> np.ndarray:
+    """Bytes del grabador -> audio en [-1, 1], sin desfase (DC). Algunos micros USB
+    baratos mandan una señal constante aunque haya silencio, y eso se contaba como
+    ruido de fondo: el umbral quedaba tan alto que NAVI no oía las frases enteras."""
+    trozo = np.frombuffer(datos, dtype=np.int16).astype(np.float32) / 32768
+    return trozo - trozo.mean()
+
+
 def _enter_presionado() -> bool:
     """¿Presionaste Enter mientras grababa? (sin bloquear)"""
     if not sys.stdin.isatty():
@@ -151,10 +159,10 @@ class Oido:
                 if not datos:
                     break
                 if _enter_presionado() or self.parar.is_set():
-                    trozos.append(np.frombuffer(datos, dtype=np.int16).astype(np.float32) / 32768)
+                    trozos.append(_muestras(datos))
                     hablando = hablando or umbral is not None
                     break
-                trozo = np.frombuffer(datos, dtype=np.int16).astype(np.float32) / 32768
+                trozo = _muestras(datos)
                 volumen = float(np.sqrt(np.mean(trozo ** 2)))
 
                 # Las primeras 0.3 s miden el ruido de fondo de tu cuarto
@@ -217,7 +225,7 @@ def medidor(segundos: int = 10) -> None:
             datos = proceso.stdout.read(BLOQUE * 2)
             if not datos:
                 break
-            trozo = np.frombuffer(datos, dtype=np.int16).astype(np.float32) / 32768
+            trozo = _muestras(datos)
             v = float(np.sqrt(np.mean(trozo ** 2)))
             volumenes.append(v)
             barra = "█" * min(int(v * 300), 60)
