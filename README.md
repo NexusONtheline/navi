@@ -12,6 +12,8 @@ AVISO> NAVI esta en beta y se puede actualizar constantemente recuerda actualiar
 Asistente personal para Linux inspirado en NAVI de **Serial Experiments Lain**.
 Vive en tu terminal, te habla, te escucha y controla tu PC/Laptop. *uso vibecoding con claude*
 
+🌐 **Web:** https://nexusontheline.github.io/navi-web/
+
 📺 **¿Tienes Google TV?** Mira también [NAVI TV](https://github.com/NexusONtheline/navi-tv): NAVI vive en la tele, reemplaza al asistente de Google y duerme con gorrito en el salvapantallas.
 
 **100% gratis**: usa la capa gratuita de la API de Gemini (cada persona pone su propia key, por ahora solo esta para key de gemini)
