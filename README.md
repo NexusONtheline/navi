@@ -82,6 +82,7 @@ El instalador te pregunta si quieres que aparezca al encender el PC.
 - Estado del PC (CPU, RAM, temperatura, batería) y actualizaciones pendientes
 - Apagar, reiniciar o suspender (ahora o programado), siempre preguntándote antes
 - Instalar y desinstalar programas («NAVI, instala OBS»): te pregunta antes y tú escribes tu contraseña en una terminal, NAVI nunca la ve
+- Ejecutar comandos de terminal («NAVI, ¿cuánto espacio me queda?»): te enseña el comando exacto y solo lo ejecuta si dices que sí
 - Ventanas y workspaces *(solo en Sway)*
 - Modo techo: barras de audio moradas en un proyector HDMI que apunta al techo
   («NAVI, techo», «techo voz», «apaga el techo»; también `./techo.sh musica|voz|apagar`).
