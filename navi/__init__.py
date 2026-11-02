@@ -2,7 +2,7 @@
 
 import socket
 
-__version__ = "0.5.0"
+__version__ = "0.6.0b1"
 
 # Muchos routers anuncian IPv6 pero no lo enrutan: Python prueba primero cada
 # dirección IPv6 y se queda colgado (el navegador no lo nota porque prueba ambas
